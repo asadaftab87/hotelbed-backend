@@ -1,0 +1,55 @@
+name: EC2 Next.js CI/CD
+
+on:
+  push:
+    branches:
+      - master
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    name: 🚀 Deploy Next.js to EC2
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v3
+
+      - name: Use Node.js version from .nvmrc
+        uses: actions/setup-node@v3
+        with:
+          node-version-file: '.nvmrc'
+
+      - name: Deploy to EC2
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.EC2_HOST }}
+          username: ${{ secrets.EC2_USER }}
+          key: ${{ secrets.EC2_SSH_KEY }}
+          script: |
+            echo "-----------------------------"
+            echo "📂 Moving to project directory"
+            cd /home/ec2-user/wedding-sponsor-backend
+
+            echo "-----------------------------"
+            echo "⬇️ Pulling latest code from master..."
+            git fetch --all
+            git reset --hard origin/master
+
+            echo "-----------------------------"
+            echo "📦 Installing dependencies..."
+            npm install --legacy-peer-deps
+
+            echo "-----------------------------"
+            echo "📦 Generating Prisma..."
+            npx prisma generate
+
+            echo "-----------------------------"
+            echo "🏗️ Building backend app..."
+            npm run build
+
+            echo "-----------------------------"
+            echo "🔄 Restarting app with PM2..."
+            pm2 restart wedding-backend || pm2 start npm --name "wedding-backend" -- serve
+
+            echo "-----------------------------"
+            echo "🎉 Deployment successful!"

@@ -1,0 +1,322 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "mysql"
+  url      = env("DATABASE_URL")
+}
+
+/// Main hotel file record
+model HotelBedFile {
+  id        Int      @id @default(autoincrement())
+  name      String
+  createdAt DateTime @default(now())
+
+  contracts        Contract[]
+  promotions       Promotion[]
+  rooms            Room[]
+  restrictions     Restriction[]
+  costs            Cost[]
+  minMaxStays      MinMaxStay[]
+  supplements      Supplement[]
+  stopSales        StopSale[]
+  cancellationFees CancellationFee[]
+  rateCodes        RateCode[]
+  extraStays       ExtraStay[]
+  extraSupplements ExtraSupplement[]
+  groups           Group[]
+  offers           Offer[]
+  serviceInfoIn    ServiceInfoIn[]
+  serviceInfoAp    ServiceInfoAp[]
+  serviceInfoCf    ServiceInfoCf[]
+  serviceInfoA     ServiceInfoA[]
+}
+
+/// Contract info (CCON)
+model Contract {
+  id           Int          @id @default(autoincrement())
+  hotelBedId   Int
+  hotelBedFile HotelBedFile @relation(fields: [hotelBedId], references: [id])
+
+  externalInventoryFlag String?
+  destinationCode       String?
+  officeCode            String?
+  contractNumber        String?
+  contractName          String?
+  companyCode           String?
+  serviceType           String?
+  hotelCode             String?
+  giataHotelCode        String?
+  startDate             DateTime?
+  endDate               DateTime?
+  noHotelFlag           Boolean?
+  currency              String?
+  baseBoard             String?
+  classification        String?
+  paymentModel          String?
+  dailyPriceFlag        Boolean?
+  releaseDaysFlag       Boolean?
+  minChildAge           Int?
+  maxChildAge           Int?
+  opaqueFlag            Boolean?
+  fixRateFlag           Boolean?
+  contractType          String?
+  maxRooms              Int?
+  hotelContent          String?
+  sellingPriceFlag      Boolean?
+}
+
+/// Promotions (CNPR)
+model Promotion {
+  id           Int          @id @default(autoincrement())
+  hotelBedId   Int
+  hotelBedFile HotelBedFile @relation(fields: [hotelBedId], references: [id])
+
+  promotionId   String?
+  promotionName String?
+  startDate     DateTime?
+  endDate       DateTime?
+  applyFrom     String?
+  applyTo       String?
+  activeFlag    Boolean?
+}
+
+/// Room info (CNHA)
+model Room {
+  id           Int          @id @default(autoincrement())
+  hotelBedId   Int
+  hotelBedFile HotelBedFile @relation(fields: [hotelBedId], references: [id])
+
+  roomCode         String?
+  characteristic   String?
+  standardCapacity Int?
+  minPax           Int?
+  maxPax           Int?
+  maxAdults        Int?
+  maxChildren      Int?
+  maxInfants       Int?
+  minAdults        Int?
+  minChildren      Int?
+}
+
+/// Restrictions (CNIN)
+model Restriction {
+  id           Int          @id @default(autoincrement())
+  hotelBedId   Int
+  hotelBedFile HotelBedFile @relation(fields: [hotelBedId], references: [id])
+
+  startDate       DateTime?
+  endDate         DateTime?
+  roomCode        String?
+  characteristic  String?
+  rateCode        String?
+  releaseDays     Int?
+  allotment       Int?
+  inventoryTuples String? // raw string if needed
+}
+
+/// Costs/Prices (CNCT)
+model Cost {
+  id           Int          @id @default(autoincrement())
+  hotelBedId   Int
+  hotelBedFile HotelBedFile @relation(fields: [hotelBedId], references: [id])
+
+  startDate       DateTime?
+  endDate         DateTime?
+  roomCode        String?
+  characteristic  String?
+  genericRate     Float?
+  marketPriceCode String?
+  perPaxFlag      Boolean?
+  netPrice        Float?
+  publicPrice     Float?
+  specificRate    String?
+  boardCode       String?
+  amount          Float?
+  validFrom       DateTime?
+  validTo         DateTime?
+}
+
+/// Minimum and maximum stay rules (CNEM)
+model MinMaxStay {
+  id           Int          @id @default(autoincrement())
+  hotelBedId   Int
+  hotelBedFile HotelBedFile @relation(fields: [hotelBedId], references: [id])
+
+  startDate      DateTime?
+  endDate        DateTime?
+  roomCode       String?
+  characteristic String?
+  boardCode      String?
+  checkInFlag    Boolean?
+  perDateFlag    Boolean?
+  daysRules      String? // e.g., "3-5" meaning min 3, max 5 nights
+}
+
+/// Supplements (CNSR)
+model Supplement {
+  id           Int          @id @default(autoincrement())
+  hotelBedId   Int
+  hotelBedFile HotelBedFile @relation(fields: [hotelBedId], references: [id])
+
+  startDate            DateTime?
+  endDate              DateTime?
+  boardCode            String?
+  perPaxFlag           Boolean?
+  amountSupplement     Float?
+  percentageSupplement Float?
+  rateCode             String?
+  roomCode             String?
+  characteristic       String?
+  minAge               Int?
+  maxAge               Int?
+  monFlag              Boolean?
+  tueFlag              Boolean?
+  wedFlag              Boolean?
+  thuFlag              Boolean?
+  friFlag              Boolean?
+  satFlag              Boolean?
+  sunFlag              Boolean?
+  netPrice             Float?
+  publicPrice          Float?
+  marketPrice          Float?
+}
+
+/// Stop sales (CNPV)
+model StopSale {
+  id           Int          @id @default(autoincrement())
+  hotelBedId   Int
+  hotelBedFile HotelBedFile @relation(fields: [hotelBedId], references: [id])
+
+  startDate      DateTime?
+  endDate        DateTime?
+  rateCode       String?
+  roomCode       String?
+  characteristic String?
+  boardCode      String?
+  stopSalesFlag  Boolean?
+}
+
+/// Cancellation fees (CNCF)
+model CancellationFee {
+  id           Int          @id @default(autoincrement())
+  hotelBedId   Int
+  hotelBedFile HotelBedFile @relation(fields: [hotelBedId], references: [id])
+
+  startDate         DateTime?
+  endDate           DateTime?
+  rateCode          String?
+  daysBeforeCheckin Int?
+  chargeType        String?
+  amount            Float?
+  percentage        Float?
+}
+
+/// Rate codes (CNTA)
+model RateCode {
+  id           Int          @id @default(autoincrement())
+  hotelBedId   Int
+  hotelBedFile HotelBedFile @relation(fields: [hotelBedId], references: [id])
+
+  rateCode    String?
+  description String?
+}
+
+/// Extra stay info (CNES)
+model ExtraStay {
+  id           Int          @id @default(autoincrement())
+  hotelBedId   Int
+  hotelBedFile HotelBedFile @relation(fields: [hotelBedId], references: [id])
+
+  startDate      DateTime?
+  endDate        DateTime?
+  roomCode       String?
+  characteristic String?
+  checkInFlag    Boolean?
+  checkOutFlag   Boolean?
+}
+
+/// Extra supplements (CNSU)
+model ExtraSupplement {
+  id           Int          @id @default(autoincrement())
+  hotelBedId   Int
+  hotelBedFile HotelBedFile @relation(fields: [hotelBedId], references: [id])
+
+  supplementCode String?
+  description    String?
+  amount         Float?
+}
+
+/// Groups (CNGR)
+model Group {
+  id           Int          @id @default(autoincrement())
+  hotelBedId   Int
+  hotelBedFile HotelBedFile @relation(fields: [hotelBedId], references: [id])
+
+  groupCode   String?
+  description String?
+}
+
+/// Offers (CNOE)
+model Offer {
+  id           Int          @id @default(autoincrement())
+  hotelBedId   Int
+  hotelBedFile HotelBedFile @relation(fields: [hotelBedId], references: [id])
+
+  offerCode   String?
+  description String?
+}
+
+/// Service Info In (SIIN)
+model ServiceInfoIn {
+  id           Int          @id @default(autoincrement())
+  hotelBedId   Int
+  hotelBedFile HotelBedFile @relation(fields: [hotelBedId], references: [id])
+  createdAt    DateTime     @default(now())
+
+  serviceCode String?
+  description String?
+  amount      Float?
+  currency    String?
+}
+
+/// Service Info Ap (SIAP)
+model ServiceInfoAp {
+  id           Int          @id @default(autoincrement())
+  hotelBedId   Int
+  hotelBedFile HotelBedFile @relation(fields: [hotelBedId], references: [id])
+  createdAt    DateTime     @default(now())
+
+  serviceCode  String?
+  description  String?
+  amount       Float?
+  applicableTo String?
+}
+
+/// Service Info Cf (SICF)
+model ServiceInfoCf {
+  id           Int          @id @default(autoincrement())
+  hotelBedId   Int
+  hotelBedFile HotelBedFile @relation(fields: [hotelBedId], references: [id])
+  createdAt    DateTime     @default(now())
+
+  serviceCode String?
+  description String?
+  feeType     String?
+  amount      Float?
+  currency    String?
+}
+
+/// Service Info A (SIA)
+model ServiceInfoA {
+  id           Int          @id @default(autoincrement())
+  hotelBedId   Int
+  hotelBedFile HotelBedFile @relation(fields: [hotelBedId], references: [id])
+  createdAt    DateTime     @default(now())
+
+  serviceCode   String?
+  description   String?
+  availability  String?
+  notes         String?
+}
