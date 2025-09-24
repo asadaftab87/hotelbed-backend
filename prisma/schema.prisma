@@ -10,7 +10,7 @@ datasource db {
 /// Main hotel file record
 model HotelBedFile {
   id        Int      @id @default(autoincrement())
-  name      String
+  name      String   @unique
   createdAt DateTime @default(now())
 
   contracts        Contract[]
