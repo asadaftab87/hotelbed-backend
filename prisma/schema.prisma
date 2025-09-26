@@ -6,7 +6,12 @@ datasource db {
   provider = "mysql"
   url      = env("DATABASE_URL")
 }
-
+model HotelBedVersion {
+  id         Int      @id @default(autoincrement())
+  fileName   String   @unique   // name of the ZIP or version identifier
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+}
 /// Main hotel file record
 model HotelBedFile {
   id        Int      @id @default(autoincrement())

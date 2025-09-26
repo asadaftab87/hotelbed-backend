@@ -2,21 +2,20 @@ import fs from "fs";
 import path from "path";
 import AdmZip from "adm-zip";
 import axios from "axios";
-import readline from "readline";
 import pLimit from "p-limit";
 import mysql from "mysql2/promise";
-import { prisma } from "../../../database";
 import { mapRow } from "../../../utils/mapper";
 import { bulkInsertRaw } from "../../../utils/bulkInsertRaw";
-
-const HOTELBEDS_URL = "https://aif2.hotelbeds.com/aif2-pub-ws/files/full";
+import ProgressBar from "progress"; 3
+import ora from "ora";
+const BASE_URL = "https://aif2.hotelbeds.com/aif2-pub-ws/files";
 const BATCH_SIZE = 2000;
 const CONCURRENCY = 5;
 
 const pool = mysql.createPool({
   host: "98.80.71.117",
   user: "asadaftab",
-  password: "Asad124@",   // raw password
+  password: "Asad124@",
   database: "hotelbed",
   waitForConnections: true,
   connectionLimit: 20,
@@ -40,46 +39,101 @@ const SECTION_TABLE_MAP: Record<string, string> = {
   SIIN: "ServiceInfoIn",
   SIAP: "ServiceInfoAp",
   SICF: "ServiceInfoCf",
-  SIA: "ServiceInfoA"
+  SIA: "ServiceInfoA",
 };
+
+// Helper function to convert bytes → MB/GB string
+function formatBytes(bytes: number) {
+  if (bytes === 0) return "0 B";
+  const k = 1024;
+  const sizes = ["B", "KB", "MB", "GB"];
+  const i = Math.floor(Math.log(bytes) / Math.log(k));
+  return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + " " + sizes[i];
+}
+
 export default class HotelBedFileRepo {
-  static async createFromZip() {
-    // const headers = { "Api-Key": "f513d78a7046ca883c02bd80926aa1b7" };
+  static async createFromZip(mode: "full" | "update" = "full") {
+    const url = `${BASE_URL}/${mode}`;
+    const headers = { "Api-Key": "f513d78a7046ca883c02bd80926aa1b7" };
 
-    // const response = await axios.get(HOTELBEDS_URL, {
-    //   headers,
-    //   responseType: "stream",
-    // });
+    const response = await axios.get(url, {
+      headers,
+      responseType: "stream",
+      timeout: 0,
+    });
 
-    // const version = response.headers["x-version"];
-    // if (!version) throw new Error("No X-Version found in response.");
+    const version = response.headers["x-version"];
+    if (!version) throw new Error("No X-Version found in response.");
 
-    // const zipPath = path.join(__dirname, "../../../../downloads/hotelbeds.zip");
-    const extractPath = path.join(__dirname, "../../../../downloads/hotelbeds");
+    const totalLength = parseInt(response.headers["content-length"] || "0", 10);
 
-    // await fs.promises.mkdir(path.dirname(zipPath), { recursive: true });
+    const zipPath = path.join(
+      __dirname,
+      `../../../../downloads/hotelbeds_${mode}_${version}.zip`
+    );
+    const extractPath = path.join(
+      __dirname,
+      `../../../../downloads/hotelbeds_${mode}_${version}`
+    );
 
-    // const writer = fs.createWriteStream(zipPath);
-    // await new Promise((resolve, reject) => {
-    //   response.data.pipe(writer);
-    //   writer.on("finish", resolve);
-    //   writer.on("error", reject);
-    // });
+    await fs.promises.mkdir(path.dirname(zipPath), { recursive: true });
 
-    // console.log(`[HotelBeds] Zip downloaded: ${zipPath}`);
+    const writer = fs.createWriteStream(zipPath);
 
-    // const zip = new AdmZip(zipPath);
-    // zip.extractAllTo(extractPath, true);
-    // console.log(`📂 Extracted to: ${extractPath}`);
+    let downloaded = 0;
+    let bar: ProgressBar | null = null;
+    let spinner: any = null;
 
-    await this.processDir(extractPath);
+    if (totalLength > 0) {
+      // ✅ Normal Progress Bar
+      bar = new ProgressBar(
+        "📥 Downloading [:bar] :percent :etas (:downloaded / :total)",
+        {
+          width: 40,
+          complete: "=",
+          incomplete: " ",
+          total: totalLength,
+        }
+      );
+    } else {
+      // ⚡ Fallback Spinner (no content-length)
+      spinner = ora("📥 Downloading... 0 MB").start();
+    }
 
-    return { result: "Data Feed In DB With Relations" };
+    response.data.on("data", (chunk: Buffer) => {
+      downloaded += chunk.length;
+      if (bar) {
+        bar.tick(chunk.length, {
+          downloaded: formatBytes(downloaded),
+          total: formatBytes(totalLength),
+        });
+      } else if (spinner) {
+        spinner.text = `📥 Downloaded ${formatBytes(downloaded)} (size unknown)`;
+      }
+    });
+
+    await new Promise((resolve, reject) => {
+      response.data.pipe(writer);
+      // @ts-ignore
+      writer.on("finish", resolve);
+      writer.on("error", reject);
+    });
+
+    if (spinner) spinner.succeed(`✅ Download complete: ${formatBytes(downloaded)}`);
+
+    console.log(`\n✅ File saved: ${zipPath}`);
+
+    const zip = new AdmZip(zipPath);
+    zip.extractAllTo(extractPath, true);
+    console.log(`📂 Extracted to: ${extractPath}`);
+
+    await this.processDir(extractPath, mode);
+
+    return { result: `${mode} Feed Applied In DB` };
   }
 
-  /** SUPERFAST PARSER */
   private static async parseFileToJson(filePath: string) {
-    const content = await fs.promises.readFile(filePath, "utf8"); // ⚡ full read
+    const content = await fs.promises.readFile(filePath, "utf8");
     const lines = content.split("\n");
 
     const sections: Record<string, any[]> = {};
@@ -104,48 +158,7 @@ export default class HotelBedFileRepo {
     return sections;
   }
 
-
-
-  /** PROCESS DIRECTORY WITH CONCURRENCY */
-  // private static async processDir(dir: string) {
-  //   const files = await fs.promises.readdir(dir, { withFileTypes: true });
-  //   const limit = pLimit(CONCURRENCY);
-
-  //   await Promise.all(
-  //     files.map(file =>
-  //       limit(async () => {
-  //         const fullPath = path.join(dir, file.name);
-  //         if (file.isDirectory()) return this.processDir(fullPath);
-  //         if (!file.isFile()) return;
-
-  //         console.log(`📂 Processing ${file.name}`);
-
-  //         try {
-  //           const jsonData = await this.parseFileToJson(fullPath);
-
-  //           for (const [section, rows] of Object.entries(jsonData)) {
-  //             if (!rows.length) continue;
-  //             const mappedRows = mapRow(section, rows).map(r => ({ fileName: file.name, ...r }));
-
-  //             for (let i = 0; i < mappedRows.length; i += BATCH_SIZE) {
-  //               const chunk = mappedRows.slice(i, i + BATCH_SIZE);
-  //               const table = SECTION_TABLE_MAP[section];
-  //               if (!table) continue;
-
-  //               // direct raw insert with mysql2
-  //               await bulkInsertRaw(table, chunk, pool, { onDuplicate: false });
-  //             }
-  //           }
-
-  //           console.log(`✅ Done ${file.name}`);
-  //         } catch (err: any) {
-  //           console.error(`❌ Failed ${file.name}:`, err.message);
-  //         }
-  //       })
-  //     )
-  //   );
-  // }
-  private static async processDir(dir: string) {
+  private static async processDir(dir: string, mode: "full" | "update") {
     const files = await fs.promises.readdir(dir, { withFileTypes: true });
     const limit = pLimit(CONCURRENCY);
 
@@ -153,26 +166,25 @@ export default class HotelBedFileRepo {
       files.map(file =>
         limit(async () => {
           const fullPath = path.join(dir, file.name);
-          if (file.isDirectory()) return this.processDir(fullPath);
+          if (file.isDirectory()) return this.processDir(fullPath, mode);
           if (!file.isFile()) return;
 
           console.log(`📂 Processing ${file.name}`);
 
           try {
-            // 1. Create HotelBedFile entry
+            // ✅ Insert into HotelBedFile (your schema supports this)
             const [result] = await pool.query(
               "INSERT INTO `HotelBedFile` (`name`) VALUES (?) ON DUPLICATE KEY UPDATE id=LAST_INSERT_ID(id)",
               [file.name]
             );
             const fileId = (result as any).insertId;
 
-            // 2. Parse file
             const jsonData = await this.parseFileToJson(fullPath);
 
             for (const [section, rows] of Object.entries(jsonData)) {
               if (!rows.length) continue;
               const mappedRows = mapRow(section, rows).map(r => ({
-                hotelBedId: fileId, // 🔗 add foreign key
+                hotelBedId: fileId,
                 ...r,
               }));
 
@@ -181,7 +193,10 @@ export default class HotelBedFileRepo {
                 const table = SECTION_TABLE_MAP[section];
                 if (!table) continue;
 
-                await bulkInsertRaw(table, chunk, pool, { onDuplicate: false });
+                // 👇 for update feeds, enable overwrite (ON DUPLICATE)
+                await bulkInsertRaw(table, chunk, pool, {
+                  onDuplicate: mode === "update",
+                });
               }
             }
 
@@ -193,5 +208,4 @@ export default class HotelBedFileRepo {
       )
     );
   }
-
 }

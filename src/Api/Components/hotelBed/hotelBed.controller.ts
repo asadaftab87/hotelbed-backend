@@ -52,9 +52,9 @@ export class HotelBedFileController {
   //     new SuccessResponse('update success', result).send(res);
   //   }
   // )
-  create = asyncHandler(
+  getFullData = asyncHandler(
     async (req: any, res: Response, next: NextFunction): Promise<Response | void> => {
-      const result = await HotelBedFileRepo.createFromZip();
+      const result = await HotelBedFileRepo.createFromZip("full");
       new SuccessResponse("HotelBeds data processed successfully", result).send(res);
     }
   )

@@ -12,7 +12,7 @@ export class HotelBedRoutes {
   initRoutes(): void {
     this.router.get(
       '/',
-      this.controller.create
+      this.controller.getFullData
     )
 
   }
