@@ -1,6 +1,9 @@
 import { PrismaClient, Prisma } from '@prisma/client'
 export {
   HotelBedFile,
+  Role,
+  Tokenstore,
+  Keystore
 } from '@prisma/client';
 import Logger from '../core/Logger';
 import { env, DATABASE, environment } from '../config/globals';
@@ -30,25 +33,25 @@ const dbURI = DATABASE[environment];
 //   console.log('Duration: ' + e.duration + 'ms')
 // })
 
-  // prisma.$on('beforeExit', async () => {
-  //   console.log('beforeExit hook')
-  //   // await prisma.message.create({
-  //   //   data: {
-  //   //     message: 'Shutting down server',
-  //   //   },
-  //   // })
-  // })
+// prisma.$on('beforeExit', async () => {
+//   console.log('beforeExit hook')
+//   // await prisma.message.create({
+//   //   data: {
+//   //     message: 'Shutting down server',
+//   //   },
+//   // })
+// })
 
-  (async function db() {
-    try {
-      Logger.info(`Connecting to ${process.env.DATABASE_URL}`);
-      await prisma.$connect()
-      Logger.info('MySQL connection done');
-    } catch (error) {
-      Logger.error('MySQL connection error');
-      Logger.error(error);
-      Logger.error('Shutdown Application')
-      await prisma.$disconnect()
-      process.exit(1)
-    }
-  })()
+(async function db() {
+  try {
+    Logger.info(`Connecting to ${process.env.DATABASE_URL}`);
+    await prisma.$connect()
+    Logger.info('MySQL connection done');
+  } catch (error) {
+    Logger.error('MySQL connection error');
+    Logger.error(error);
+    Logger.error('Shutdown Application')
+    await prisma.$disconnect()
+    process.exit(1)
+  }
+})()

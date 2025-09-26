@@ -6,6 +6,23 @@ datasource db {
   provider = "mysql"
   url      = env("DATABASE_URL")
 }
+
+enum RoleName {
+  SUPER_ADMIN
+  COUPLE
+  VENDOR
+  BUSINESS_SPONSOR
+  FAMILY_SPONSOR
+}
+
+enum TokenType {
+  SIGNIN
+  SIGNUP
+  EMAIL_VERIFY
+  PHONE_VERIFY
+  TWO_FACTOR_AUTHENTICATION
+  FORGOT_PASSWORD
+}
 model HotelBedVersion {
   id         Int      @id @default(autoincrement())
   fileName   String   @unique   // name of the ZIP or version identifier
@@ -324,4 +341,66 @@ model ServiceInfoA {
   description   String?
   availability  String?
   notes         String?
+}
+model Role {
+  id        String   @id @default(uuid())
+  code      RoleName @unique
+  isActive  Boolean  @default(true)
+  isDeleted Boolean  @default(false)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  users User[]
+}
+model User {
+  id           String       @id @default(uuid())
+  email        String       @unique
+  password     String
+  firstName    String?
+  lastName     String?
+  // dateofbirth  String?
+  userName     String?
+  phoneNumber  String?
+  profileImage String?
+  // type         String?
+  roleId       String
+  role         Role         @relation(fields: [roleId], references: [id], onDelete: Restrict)
+  isDeleted    Boolean      @default(false)
+  createdAt    DateTime     @default(now())
+  updatedAt    DateTime     @updatedAt
+  keystores    Keystore[]
+  tokenstore   Tokenstore[]
+
+  @@index([roleId])
+}
+model Keystore {
+  id           String   @id @default(uuid())
+  primaryKey   String
+  secondaryKey String
+  isActive     Boolean  @default(true)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  clientId String?
+  client   User?   @relation(fields: [clientId], references: [id], onDelete: Cascade)
+
+  // Prevent duplicate keys per client (optional but recommended)
+  // @@unique([clientId, primaryKey])
+}
+
+model Tokenstore {
+  id        String    @id @default(uuid())
+  type      TokenType
+  token     String    @unique
+  shortCode String? // optional; can be used for OTP/short codes
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  expireAt  DateTime
+
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  // If you want shortCode unique when present:
+  @@unique([type, shortCode])
+  @@index([type, userId])
 }
