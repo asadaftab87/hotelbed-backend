@@ -28,7 +28,7 @@ jobs:
           script: |
             echo "-----------------------------"
             echo "📂 Moving to project directory"
-            cd /home/ec2-user/wedding-sponsor-backend
+            cd /home/ec2-user/hotelbed-backend
 
             echo "-----------------------------"
             echo "⬇️ Pulling latest code from master..."
@@ -49,7 +49,7 @@ jobs:
 
             echo "-----------------------------"
             echo "🔄 Restarting app with PM2..."
-            pm2 restart wedding-backend || pm2 start npm --name "wedding-backend" -- serve
+            pm2 restart hotelbed-backend || pm2 start npm --name "hotelbed-backend" -- serve
 
             echo "-----------------------------"
             echo "🎉 Deployment successful!"
