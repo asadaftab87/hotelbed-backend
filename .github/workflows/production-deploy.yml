@@ -1,4 +1,4 @@
-name: EC2 Next.js CI/CD
+name: EC2 Node.js Backend CI/CD
 
 on:
   push:
@@ -8,7 +8,7 @@ on:
 jobs:
   deploy:
     runs-on: ubuntu-latest
-    name: 🚀 Deploy Next.js to EC2
+    name: 🚀 Deploy Node.js Backend to EC2
 
     steps:
       - name: Checkout repository
@@ -32,8 +32,10 @@ jobs:
 
             echo "-----------------------------"
             echo "⬇️ Pulling latest code from master..."
-            git fetch --all
-            git reset --hard origin/master
+            git reset --hard 
+            git checkout master
+            git reset --hard
+            git pull origin master
 
             echo "-----------------------------"
             echo "📦 Installing dependencies..."
