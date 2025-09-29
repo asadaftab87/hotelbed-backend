@@ -7,9 +7,7 @@ import { Server } from './Api/server'
 import Logger from './core/Logger';
 import { prisma } from "./database"
 // import { CronJob } from './utils/cronJobs';
-export const app: express.Application = new Server().app;
 
-let server: HttpServer;
 (async function main(): Promise<void> {
   try {
 
@@ -19,8 +17,8 @@ let server: HttpServer;
       Logger.error(e);
     });
 
-    // const app: express.Application = new Server().app
-    server = createServer(app)
+    const app: express.Application = new Server().app
+    const server: HttpServer = createServer(app)
 
     server.listen(port)
 
