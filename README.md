@@ -47,7 +47,7 @@ A Node.js backend for managing hotel bed data, built with TypeScript, Express, P
 1. Clone the repository:
 
 ```bash
-git clone https://github.com/asadaftab87/wedding-sponsor-backend.git
+git clone [https://github.com/asadaftab87/wedding-sponsor-backend.git](https://github.com/asadaftab87/hotelbed-backend.git)
 cd hotel-bed-backend
 ```
 
