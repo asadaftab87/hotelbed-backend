@@ -55,7 +55,10 @@ export default class HotelBedFileRepo {
   static async createFromZip(mode: "full" | "update" = "full") {
     const url = `${BASE_URL}/${mode}`;
     const headers = { "Api-Key": "f513d78a7046ca883c02bd80926aa1b7" };
-
+    if (mode === "full") {
+      console.log("🧹 Cleaning Database before full feed...");
+      await this.cleanDatabase();
+    }
     const response = await axios.get(url, {
       headers,
       responseType: "stream",
@@ -128,10 +131,41 @@ export default class HotelBedFileRepo {
     console.log(`📂 Extracted to: ${extractPath}`);
 
     await this.processDir(extractPath, mode);
-
+    // ✅ Process complete hone ke baad cleanup
+    try {
+      await fs.promises.unlink(zipPath); // delete zip file
+      await fs.promises.rm(extractPath, { recursive: true, force: true }); // delete extracted folder
+      console.log("🗑️ Cleaned up downloaded files & extracted folder.");
+    } catch (err: any) {
+      console.error("⚠️ Cleanup failed:", err.message);
+    }
     return { result: `${mode} Feed Applied In DB` };
   }
+  private static async cleanDatabase() {
+    try {
+      const conn = await pool.getConnection();
+      try {
+        await conn.query("SET FOREIGN_KEY_CHECKS = 0");
 
+        // Truncate all mapped tables
+        for (const table of Object.values(SECTION_TABLE_MAP)) {
+          console.log(`🧹 Truncating ${table}...`);
+          await conn.query(`TRUNCATE TABLE \`${table}\``);
+        }
+
+        // Truncate HotelBedFile table also
+        await conn.query("TRUNCATE TABLE `HotelBedFile`");
+
+        await conn.query("SET FOREIGN_KEY_CHECKS = 1");
+        console.log("✅ Database cleaned successfully.");
+      } finally {
+        conn.release();
+      }
+    } catch (err: any) {
+      console.error("❌ Failed to clean DB:", err.message);
+      throw err;
+    }
+  }
   private static async parseFileToJson(filePath: string) {
     const content = await fs.promises.readFile(filePath, "utf8");
     const lines = content.split("\n");
