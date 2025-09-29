@@ -6,7 +6,7 @@ import { port, environment } from './config/globals'
 import { Server } from './Api/server'
 import Logger from './core/Logger';
 import { prisma } from "./database"
-// import { CronJob } from './utils/cronJobs';
+import { CronJob } from './utils/cronJobs';
 
 (async function main(): Promise<void> {
   try {
@@ -25,7 +25,7 @@ import { prisma } from "./database"
     server.on('listening', () => {
       Logger.info(`node server is listening on port ${port} in ${environment} mode`)
     })
-    // new CronJob()
+    new CronJob()
 
   } catch (err: any) {
     console.log(err);
