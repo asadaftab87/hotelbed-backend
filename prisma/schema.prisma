@@ -23,12 +23,14 @@ enum TokenType {
   TWO_FACTOR_AUTHENTICATION
   FORGOT_PASSWORD
 }
+
 model HotelBedVersion {
-  id         Int      @id @default(autoincrement())
-  fileName   String   @unique   // name of the ZIP or version identifier
-  createdAt  DateTime @default(now())
-  updatedAt  DateTime @updatedAt
+  id        Int      @id @default(autoincrement())
+  fileName  String   @unique // name of the ZIP or version identifier
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 }
+
 /// Main hotel file record
 model HotelBedFile {
   id        Int      @id @default(autoincrement())
@@ -53,6 +55,7 @@ model HotelBedFile {
   serviceInfoAp    ServiceInfoAp[]
   serviceInfoCf    ServiceInfoCf[]
   serviceInfoA     ServiceInfoA[]
+  inventories      Inventory[]
 }
 
 /// Contract info (CCON)
@@ -337,11 +340,12 @@ model ServiceInfoA {
   hotelBedFile HotelBedFile @relation(fields: [hotelBedId], references: [id])
   createdAt    DateTime     @default(now())
 
-  serviceCode   String?
-  description   String?
-  availability  String?
-  notes         String?
+  serviceCode  String?
+  description  String?
+  availability String?
+  notes        String?
 }
+
 model Role {
   id        String   @id @default(uuid())
   code      RoleName @unique
@@ -352,6 +356,7 @@ model Role {
 
   users User[]
 }
+
 model User {
   id           String       @id @default(uuid())
   email        String       @unique
@@ -373,6 +378,7 @@ model User {
 
   @@index([roleId])
 }
+
 model Keystore {
   id           String   @id @default(uuid())
   primaryKey   String
@@ -403,4 +409,33 @@ model Tokenstore {
   // If you want shortCode unique when present:
   @@unique([type, shortCode])
   @@index([type, userId])
+}
+
+model Inventory {
+  id           Int          @id @default(autoincrement())
+  hotelBedId   Int
+  hotelBedFile HotelBedFile @relation(fields: [hotelBedId], references: [id])
+
+  calendarDate DateTime
+  roomCode     String?
+  rateCode     String?
+  boardCode    String?
+
+  allotment   Int?
+  stopSale    Boolean?
+  releaseDays Int?
+
+  cta Boolean? // Closed To Arrival
+  ctd Boolean? // Closed To Departure
+
+  minNights Int?
+  maxNights Int?
+
+  netPrice    Float?
+  publicPrice Float?
+  currency    String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  @@unique([hotelBedId, calendarDate, roomCode, rateCode]) // 👈 yeh line add karo
 }

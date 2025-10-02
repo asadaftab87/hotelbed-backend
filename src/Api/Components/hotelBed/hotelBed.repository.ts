@@ -8,6 +8,7 @@ import { mapRow } from "../../../utils/mapper";
 import { bulkInsertRaw } from "../../../utils/bulkInsertRaw";
 import ProgressBar from "progress"; 3
 import ora from "ora";
+import { buildInventory } from "../../../utils/inventoryJob";
 const BASE_URL = "https://aif2.hotelbeds.com/aif2-pub-ws/files";
 const BATCH_SIZE = 2000;
 const CONCURRENCY = 5;
@@ -233,7 +234,7 @@ export default class HotelBedFileRepo {
                 });
               }
             }
-
+            await buildInventory(fileId);
             console.log(`✅ Done ${file.name}`);
           } catch (err: any) {
             console.error(`❌ Failed ${file.name}:`, err.message);
