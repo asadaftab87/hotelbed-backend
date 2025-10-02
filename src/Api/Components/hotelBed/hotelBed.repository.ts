@@ -14,7 +14,7 @@ const BATCH_SIZE = 2000;
 const CONCURRENCY = 5;
 
 const pool = mysql.createPool({
-  host: "98.80.71.117",
+  host: "13.222.188.164",
   user: "asadaftab",
   password: "Asad124@",
   database: "hotelbed",
