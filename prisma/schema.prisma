@@ -35,6 +35,8 @@ model HotelBedFile {
   name      String   @unique
   createdAt DateTime @default(now())
 
+  hotelMasters     HotelMaster[]
+  boardMasters     BoardMaster[]
   contracts        Contract[]
   promotions       Promotion[]
   rooms            Room[]
@@ -53,6 +55,7 @@ model HotelBedFile {
   serviceInfoAp    ServiceInfoAp[]
   serviceInfoCf    ServiceInfoCf[]
   serviceInfoA     ServiceInfoA[]
+  taxes            Tax[]
 }
 
 /// Contract info (CCON)
@@ -403,4 +406,79 @@ model Tokenstore {
   // If you want shortCode unique when present:
   @@unique([type, shortCode])
   @@index([type, userId])
+}
+
+/// Hotel Master Information (HOTEL)
+model HotelMaster {
+  id           Int          @id @default(autoincrement())
+  hotelBedId   Int
+  hotelBedFile HotelBedFile @relation(fields: [hotelBedId], references: [id])
+  createdAt    DateTime     @default(now())
+
+  hotelCode        String?
+  hotelName        String?
+  hotelCategory    String?
+  hotelType        String?
+  destinationCode  String?
+  destinationName  String?
+  zoneCode         String?
+  zoneName         String?
+  countryCode      String?
+  countryName      String?
+  stateCode        String?
+  stateName        String?
+  cityCode         String?
+  cityName         String?
+  latitude         String?
+  longitude        String?
+  address          String?
+  postalCode       String?
+  phone            String?
+  fax              String?
+  email            String?
+  website          String?
+  chainCode        String?
+  chainName        String?
+  accommodationType String?
+  segmentCodes     String?
+  coordinates       String?
+  lastUpdate       DateTime?
+  ranking          String?
+  currency         String?
+  giataHotelCode   String?
+  giataDestinationCode String?
+  giataZoneCode    String?
+  giataCountryCode String?
+  giataStateCode   String?
+  giataCityCode    String?
+}
+
+/// Board Master Information (BOARD)
+model BoardMaster {
+  id           Int          @id @default(autoincrement())
+  hotelBedId   Int
+  hotelBedFile HotelBedFile @relation(fields: [hotelBedId], references: [id])
+  createdAt    DateTime     @default(now())
+
+  boardCode        String?
+  boardName         String?
+  boardDescription  String?
+}
+
+/// Tax Information (ATAX)
+model Tax {
+  id           Int          @id @default(autoincrement())
+  hotelBedId   Int
+  hotelBedFile HotelBedFile @relation(fields: [hotelBedId], references: [id])
+  createdAt    DateTime     @default(now())
+
+  taxCode        String?
+  taxName        String?
+  taxType        String?
+  taxRate        String?
+  taxAmount      String?
+  taxCategory    String?
+  taxDescription String?
+  isActive       Boolean?
+  lastUpdate     DateTime?
 }

@@ -1,6 +1,53 @@
 // src/utils/sectionMappers.ts
 
 export const sectionMappers: Record<string, string[]> = {
+  // --- Hotel Master Information ---
+  HOTEL: [
+    "hotelCode",
+    "hotelName", 
+    "hotelCategory",
+    "hotelType",
+    "destinationCode",
+    "destinationName",
+    "zoneCode",
+    "zoneName",
+    "countryCode",
+    "countryName",
+    "stateCode",
+    "stateName",
+    "cityCode",
+    "cityName",
+    "latitude",
+    "longitude",
+    "address",
+    "postalCode",
+    "phone",
+    "fax",
+    "email",
+    "website",
+    "chainCode",
+    "chainName",
+    "accommodationType",
+    "segmentCodes",
+    "coordinates",
+    "lastUpdate",
+    "ranking",
+    "currency",
+    "giataHotelCode",
+    "giataDestinationCode",
+    "giataZoneCode",
+    "giataCountryCode",
+    "giataStateCode",
+    "giataCityCode"
+  ],
+
+  // --- Board Master Information ---
+  BOARD: [
+    "boardCode",
+    "boardName",
+    "boardDescription"
+  ],
+
   // --- Contract Header ---
   CCON: [
     "externalInventoryFlag",
@@ -174,4 +221,17 @@ export const sectionMappers: Record<string, string[]> = {
 
   // --- Service Info A ---
   SIA: ["serviceCode", "description", "availability", "notes"],
+
+  // --- Tax Information ---
+  ATAX: [
+    "taxCode",
+    "taxName",
+    "taxType",
+    "taxRate",
+    "taxAmount",
+    "taxCategory",
+    "taxDescription",
+    "isActive",
+    "lastUpdate"
+  ],
 };

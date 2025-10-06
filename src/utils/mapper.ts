@@ -12,7 +12,8 @@ function toMySQLDateString(value: string | Date | null): string | null {
 const BOOLEAN_FIELDS = [
   "noHotelFlag","dailyPriceFlag","releaseDaysFlag","opaqueFlag","fixRateFlag",
   "sellingPriceFlag","activeFlag","checkInFlag","checkOutFlag","stopSalesFlag",
-  "perPaxFlag","monFlag","tueFlag","wedFlag","thuFlag","friFlag","satFlag","sunFlag"
+  "perPaxFlag","monFlag","tueFlag","wedFlag","thuFlag","friFlag","satFlag","sunFlag",
+  "isActive"
 ];
 
 const INT_FIELDS = [
@@ -23,7 +24,8 @@ const INT_FIELDS = [
 
 const FLOAT_FIELDS_NULLABLE = [
   "genericRate","specificRate","amount","netPrice","publicPrice",
-  "marketPrice","amountSupplement","percentageSupplement","percentage"
+  "marketPrice","amountSupplement","percentageSupplement","percentage",
+  "taxRate","taxAmount"
 ];
 
 export function mapRow(section: string, rows: Record<string, any>[]) {
@@ -37,7 +39,7 @@ export function mapRow(section: string, rows: Record<string, any>[]) {
       let value = row[`field_${idx}`];
 
       // Date fields -> MySQL datetime string
-      if (fieldName.toLowerCase().includes("date")) {
+      if (fieldName.toLowerCase().includes("date") || fieldName.toLowerCase().includes("from") || fieldName.toLowerCase().includes("to")) {
         const parsed = parseHotelBedsDate(value);
         value = parsed ? toMySQLDateString(parsed) : null;
       }

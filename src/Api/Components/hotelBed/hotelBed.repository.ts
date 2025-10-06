@@ -13,7 +13,7 @@ const BATCH_SIZE = 2000;
 const CONCURRENCY = 5;
 
 const pool = mysql.createPool({
-  host: "98.80.71.117",
+  host: "13.222.188.164",
   user: "asadaftab",
   password: "Asad124@",
   database: "hotelbed",
@@ -22,6 +22,8 @@ const pool = mysql.createPool({
 });
 
 const SECTION_TABLE_MAP: Record<string, string> = {
+  HOTEL: "HotelMaster",
+  BOARD: "BoardMaster",
   CCON: "Contract",
   CNPR: "Promotion",
   CNHA: "Room",
@@ -40,6 +42,7 @@ const SECTION_TABLE_MAP: Record<string, string> = {
   SIAP: "ServiceInfoAp",
   SICF: "ServiceInfoCf",
   SIA: "ServiceInfoA",
+  ATAX: "Tax",
 };
 
 // Helper function to convert bytes → MB/GB string
