@@ -1,5 +1,6 @@
 import fs from "fs";
 import path from "path";
+import { randomUUID } from "crypto";
 import AdmZip from "adm-zip";
 import axios from "axios";
 import pLimit from "p-limit";
@@ -13,7 +14,7 @@ const BATCH_SIZE = 2000;
 const CONCURRENCY = 5;
 
 const pool = mysql.createPool({
-  host: "54.82.88.6",
+  host: "54.85.142.212",
   user: "asadaftab",
   password: "Asad124@",
   database: "hotelbed",
@@ -55,96 +56,96 @@ function formatBytes(bytes: number) {
 
 export default class HotelBedFileRepo {
   static async createFromZip(mode: "full" | "update" = "full") {
-    const url = `${BASE_URL}/${mode}`;
-    const headers = { "Api-Key": "f513d78a7046ca883c02bd80926aa1b7" };
-    if (mode === "full") {
-      console.log("🧹 Cleaning Database before full feed...");
-      await this.cleanDatabase();
-    }
-    const response = await axios.get(url, {
-      headers,
-      responseType: "stream",
-      timeout: 0,
-    });
+    // const url = `${BASE_URL}/${mode}`;
+    // const headers = { "Api-Key": "f513d78a7046ca883c02bd80926aa1b7" };
+    // if (mode === "full") {
+    //   console.log("🧹 Cleaning Database before full feed...");
+    //   await this.cleanDatabase();
+    // }
+    // const response = await axios.get(url, {
+    //   headers,
+    //   responseType: "stream",
+    //   timeout: 0,
+    // });
 
-    const version = response.headers["x-version"];
-    if (!version) throw new Error("No X-Version found in response.");
+    // const version = response.headers["x-version"];
+    // if (!version) throw new Error("No X-Version found in response.");
 
-    const totalLength = parseInt(response.headers["content-length"] || "0", 10);
+    // const totalLength = parseInt(response.headers["content-length"] || "0", 10);
 
-    const zipPath = path.join(
-      __dirname,
-      `../../../../downloads/hotelbeds_${mode}_${version}.zip`
-    );
-    const extractPath = path.join(
-      __dirname,
-      `../../../../downloads/hotelbeds_${mode}_${version}`
-    );
-
+    // const zipPath = path.join(
+    //   __dirname,
+    //   `../../../../downloads/hotelbeds_${mode}_${version}.zip`
+    // );
     // const extractPath = path.join(
     //   __dirname,
-    //   `../../../../downloads/fullrates_v1`
+    //   `../../../../downloads/hotelbeds_${mode}_${version}`
     // );
-    await fs.promises.mkdir(path.dirname(zipPath), { recursive: true });
 
-    const writer = fs.createWriteStream(zipPath);
+    const extractPath = path.join(
+      __dirname,
+      `../../../../downloads/fullrates_v1`
+    );
+    // await fs.promises.mkdir(path.dirname(zipPath), { recursive: true });
 
-    let downloaded = 0;
-    let bar: ProgressBar | null = null;
-    let spinner: any = null;
+    // const writer = fs.createWriteStream(zipPath);
 
-    if (totalLength > 0) {
-      // ✅ Normal Progress Bar
-      bar = new ProgressBar(
-        "📥 Downloading [:bar] :percent :etas (:downloaded / :total)",
-        {
-          width: 40,
-          complete: "=",
-          incomplete: " ",
-          total: totalLength,
-        }
-      );
-    } else {
-      // ⚡ Fallback Spinner (no content-length)
-      spinner = ora("📥 Downloading... 0 MB").start();
-    }
+    // let downloaded = 0;
+    // let bar: ProgressBar | null = null;
+    // let spinner: any = null;
 
-    response.data.on("data", (chunk: Buffer) => {
-      downloaded += chunk.length;
-      if (bar) {
-        bar.tick(chunk.length, {
-          downloaded: formatBytes(downloaded),
-          total: formatBytes(totalLength),
-        });
-      } else if (spinner) {
-        spinner.text = `📥 Downloaded ${formatBytes(downloaded)} (size unknown)`;
-      }
-    });
+    // if (totalLength > 0) {
+    //   // ✅ Normal Progress Bar
+    //   bar = new ProgressBar(
+    //     "📥 Downloading [:bar] :percent :etas (:downloaded / :total)",
+    //     {
+    //       width: 40,
+    //       complete: "=",
+    //       incomplete: " ",
+    //       total: totalLength,
+    //     }
+    //   );
+    // } else {
+    //   // ⚡ Fallback Spinner (no content-length)
+    //   spinner = ora("📥 Downloading... 0 MB").start();
+    // }
 
-    await new Promise((resolve, reject) => {
-      response.data.pipe(writer);
-      // @ts-ignore
-      writer.on("finish", resolve);
-      writer.on("error", reject);
-    });
+    // response.data.on("data", (chunk: Buffer) => {
+    //   downloaded += chunk.length;
+    //   if (bar) {
+    //     bar.tick(chunk.length, {
+    //       downloaded: formatBytes(downloaded),
+    //       total: formatBytes(totalLength),
+    //     });
+    //   } else if (spinner) {
+    //     spinner.text = `📥 Downloaded ${formatBytes(downloaded)} (size unknown)`;
+    //   }
+    // });
 
-    if (spinner) spinner.succeed(`✅ Download complete: ${formatBytes(downloaded)}`);
+    // await new Promise((resolve, reject) => {
+    //   response.data.pipe(writer);
+    //   // @ts-ignore
+    //   writer.on("finish", resolve);
+    //   writer.on("error", reject);
+    // });
 
-    console.log(`\n✅ File saved: ${zipPath}`);
+    // if (spinner) spinner.succeed(`✅ Download complete: ${formatBytes(downloaded)}`);
 
-    const zip = new AdmZip(zipPath);
-    zip.extractAllTo(extractPath, true);
-    console.log(`📂 Extracted to: ${extractPath}`);
+    // console.log(`\n✅ File saved: ${zipPath}`);
+
+    // const zip = new AdmZip(zipPath);
+    // zip.extractAllTo(extractPath, true);
+    // console.log(`📂 Extracted to: ${extractPath}`);
 
     await this.processDir(extractPath, mode);
-    // ✅ Process complete hone ke baad cleanup
-    try {
-      await fs.promises.unlink(zipPath); // delete zip file
-      await fs.promises.rm(extractPath, { recursive: true, force: true }); // delete extracted folder
-      console.log("🗑️ Cleaned up downloaded files & extracted folder.");
-    } catch (err: any) {
-      console.error("⚠️ Cleanup failed:", err.message);
-    }
+    // // ✅ Process complete hone ke baad cleanup
+    // try {
+    //   await fs.promises.unlink(zipPath); // delete zip file
+    //   await fs.promises.rm(extractPath, { recursive: true, force: true }); // delete extracted folder
+    //   console.log("🗑️ Cleaned up downloaded files & extracted folder.");
+    // } catch (err: any) {
+    //   console.error("⚠️ Cleanup failed:", err.message);
+    // }
     return { result: `${mode} Feed Applied In DB` };
   }
   private static async cleanDatabase() {
@@ -212,18 +213,19 @@ export default class HotelBedFileRepo {
           console.log(`📂 Processing ${file.name}`);
 
           try {
-            // ✅ Insert into HotelBedFile (your schema supports this)
-            const [result] = await pool.query(
-              "INSERT INTO `HotelBedFile` (`name`) VALUES (?) ON DUPLICATE KEY UPDATE id=LAST_INSERT_ID(id)",
-              [file.name]
+            // ✅ Insert into HotelBedFile with UUID
+            const fileId = randomUUID();
+            await pool.query(
+              "INSERT INTO `HotelBedFile` (`id`, `name`, `createdAt`) VALUES (?, ?, NOW()) ON DUPLICATE KEY UPDATE id=VALUES(id)",
+              [fileId, file.name]
             );
-            const fileId = (result as any).insertId;
 
             const jsonData = await this.parseFileToJson(fullPath);
 
             for (const [section, rows] of Object.entries(jsonData)) {
               if (!rows.length) continue;
               const mappedRows = mapRow(section, rows).map(r => ({
+                id: randomUUID(),
                 hotelBedId: fileId,
                 ...r,
               }));

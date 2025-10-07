@@ -31,7 +31,7 @@ model HotelBedVersion {
 }
 /// Main hotel file record
 model HotelBedFile {
-  id        Int      @id @default(autoincrement())
+  id        String   @id @default(uuid())
   name      String   @unique
   createdAt DateTime @default(now())
 
@@ -59,8 +59,8 @@ model HotelBedFile {
 
 /// Contract info (CCON) - 26 fields from documentation
 model Contract {
-  id           Int          @id @default(autoincrement())
-  hotelBedId   Int
+  id           String       @id @default(uuid())
+  hotelBedId   String
   hotelBedFile HotelBedFile @relation(fields: [hotelBedId], references: [id])
 
   externalInventory String?
@@ -93,8 +93,8 @@ model Contract {
 
 /// Promotions (CNPR) - 7 fields from documentation
 model Promotion {
-  id           Int          @id @default(autoincrement())
-  hotelBedId   Int
+  id           String       @id @default(uuid())
+  hotelBedId   String
   hotelBedFile HotelBedFile @relation(fields: [hotelBedId], references: [id])
 
   code                    String?
@@ -108,8 +108,8 @@ model Promotion {
 
 /// Room info (CNHA)
 model Room {
-  id           Int          @id @default(autoincrement())
-  hotelBedId   Int
+  id           String       @id @default(uuid())
+  hotelBedId   String
   hotelBedFile HotelBedFile @relation(fields: [hotelBedId], references: [id])
 
   roomCode         String?
@@ -126,8 +126,8 @@ model Room {
 
 /// Restrictions (CNIN)
 model Restriction {
-  id           Int          @id @default(autoincrement())
-  hotelBedId   Int
+  id           String       @id @default(uuid())
+  hotelBedId   String
   hotelBedFile HotelBedFile @relation(fields: [hotelBedId], references: [id])
 
   startDate       DateTime?
@@ -142,8 +142,8 @@ model Restriction {
 
 /// Costs/Prices (CNCT)
 model Cost {
-  id           Int          @id @default(autoincrement())
-  hotelBedId   Int
+  id           String       @id @default(uuid())
+  hotelBedId   String
   hotelBedFile HotelBedFile @relation(fields: [hotelBedId], references: [id])
 
   startDate       DateTime?
@@ -164,8 +164,8 @@ model Cost {
 
 /// Minimum and maximum stay rules (CNEM)
 model MinMaxStay {
-  id           Int          @id @default(autoincrement())
-  hotelBedId   Int
+  id           String       @id @default(uuid())
+  hotelBedId   String
   hotelBedFile HotelBedFile @relation(fields: [hotelBedId], references: [id])
 
   startDate      DateTime?
@@ -180,8 +180,8 @@ model MinMaxStay {
 
 /// Supplements (CNSR) - Currently empty in data but defined in documentation
 model Supplement {
-  id           Int          @id @default(autoincrement())
-  hotelBedId   Int
+  id           String       @id @default(uuid())
+  hotelBedId   String
   hotelBedFile HotelBedFile @relation(fields: [hotelBedId], references: [id])
 
   startDate            DateTime?
@@ -209,8 +209,8 @@ model Supplement {
 
 /// Stop sales (CNPV) - Currently empty in data but defined in documentation
 model StopSale {
-  id           Int          @id @default(autoincrement())
-  hotelBedId   Int
+  id           String       @id @default(uuid())
+  hotelBedId   String
   hotelBedFile HotelBedFile @relation(fields: [hotelBedId], references: [id])
 
   startDate      DateTime?
@@ -224,8 +224,8 @@ model StopSale {
 
 /// Cancellation fees (CNCF)
 model CancellationFee {
-  id           Int          @id @default(autoincrement())
-  hotelBedId   Int
+  id           String       @id @default(uuid())
+  hotelBedId   String
   hotelBedFile HotelBedFile @relation(fields: [hotelBedId], references: [id])
 
   startDate         DateTime?
@@ -239,8 +239,8 @@ model CancellationFee {
 
 /// Rate codes (CNTA)
 model RateCode {
-  id           Int          @id @default(autoincrement())
-  hotelBedId   Int
+  id           String       @id @default(uuid())
+  hotelBedId   String
   hotelBedFile HotelBedFile @relation(fields: [hotelBedId], references: [id])
 
   rateCode    String?
@@ -249,8 +249,8 @@ model RateCode {
 
 /// Extra stay info (CNES)
 model ExtraStay {
-  id           Int          @id @default(autoincrement())
-  hotelBedId   Int
+  id           String       @id @default(uuid())
+  hotelBedId   String
   hotelBedFile HotelBedFile @relation(fields: [hotelBedId], references: [id])
 
   startDate      DateTime?
@@ -263,8 +263,8 @@ model ExtraStay {
 
 /// Extra supplements (CNSU)
 model ExtraSupplement {
-  id           Int          @id @default(autoincrement())
-  hotelBedId   Int
+  id           String       @id @default(uuid())
+  hotelBedId   String
   hotelBedFile HotelBedFile @relation(fields: [hotelBedId], references: [id])
 
   startDate         DateTime?
@@ -301,8 +301,8 @@ model ExtraSupplement {
 
 /// Groups (CNGR)
 model Group {
-  id           Int          @id @default(autoincrement())
-  hotelBedId   Int
+  id           String       @id @default(uuid())
+  hotelBedId   String
   hotelBedFile HotelBedFile @relation(fields: [hotelBedId], references: [id])
 
   groupCode   String?
@@ -311,8 +311,8 @@ model Group {
 
 /// Offers (CNOE)
 model Offer {
-  id           Int          @id @default(autoincrement())
-  hotelBedId   Int
+  id           String       @id @default(uuid())
+  hotelBedId   String
   hotelBedFile HotelBedFile @relation(fields: [hotelBedId], references: [id])
 
   offerCode   String?
@@ -321,8 +321,8 @@ model Offer {
 
 /// Client/Names (CNNH) - No hotel contracts
 model Client {
-  id           Int          @id @default(autoincrement())
-  hotelBedId   Int
+  id           String       @id @default(uuid())
+  hotelBedId   String
   hotelBedFile HotelBedFile @relation(fields: [hotelBedId], references: [id])
   createdAt    DateTime     @default(now())
 
@@ -334,8 +334,8 @@ model Client {
 
 /// Valid Markets (CNCL) - 2 fields from documentation
 model ValidMarket {
-  id           Int          @id @default(autoincrement())
-  hotelBedId   Int
+  id           String       @id @default(uuid())
+  hotelBedId   String
   hotelBedFile HotelBedFile @relation(fields: [hotelBedId], references: [id])
   createdAt    DateTime     @default(now())
 
@@ -345,8 +345,8 @@ model ValidMarket {
 
 /// Handling Fees (CNHF) - 13 fields from documentation
 model HandlingFee {
-  id           Int          @id @default(autoincrement())
-  hotelBedId   Int
+  id           String       @id @default(uuid())
+  hotelBedId   String
   hotelBedFile HotelBedFile @relation(fields: [hotelBedId], references: [id])
   createdAt    DateTime     @default(now())
 
@@ -367,8 +367,8 @@ model HandlingFee {
 
 /// Tax Breakdown (ATAX) - 17 fields from documentation
 model Tax {
-  id           Int          @id @default(autoincrement())
-  hotelBedId   Int
+  id           String       @id @default(uuid())
+  hotelBedId   String
   hotelBedFile HotelBedFile @relation(fields: [hotelBedId], references: [id])
   createdAt    DateTime     @default(now())
 
@@ -455,8 +455,8 @@ model Tokenstore {
 
 /// Hotel Master Information (HOTEL)
 model HotelMaster {
-  id           Int          @id @default(autoincrement())
-  hotelBedId   Int
+  id           String       @id @default(uuid())
+  hotelBedId   String
   hotelBedFile HotelBedFile @relation(fields: [hotelBedId], references: [id])
   createdAt    DateTime     @default(now())
 
@@ -477,8 +477,8 @@ model HotelMaster {
 
 /// Board Master Information (BOARD)
 model BoardMaster {
-  id           Int          @id @default(autoincrement())
-  hotelBedId   Int
+  id           String       @id @default(uuid())
+  hotelBedId   String
   hotelBedFile HotelBedFile @relation(fields: [hotelBedId], references: [id])
   createdAt    DateTime     @default(now())
 
