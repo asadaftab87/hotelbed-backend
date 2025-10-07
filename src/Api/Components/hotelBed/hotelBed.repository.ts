@@ -13,7 +13,7 @@ const BATCH_SIZE = 2000;
 const CONCURRENCY = 5;
 
 const pool = mysql.createPool({
-  host: "13.222.188.164",
+  host: "54.82.88.6",
   user: "asadaftab",
   password: "Asad124@",
   database: "hotelbed",
@@ -38,10 +38,9 @@ const SECTION_TABLE_MAP: Record<string, string> = {
   CNSU: "ExtraSupplement",
   CNGR: "Group",
   CNOE: "Offer",
-  SIIN: "ServiceInfoIn",
-  SIAP: "ServiceInfoAp",
-  SICF: "ServiceInfoCf",
-  SIA: "ServiceInfoA",
+  CNNH: "Client",
+  CNCL: "ValidMarket",
+  CNHF: "HandlingFee",
   ATAX: "Tax",
 };
 
@@ -56,92 +55,96 @@ function formatBytes(bytes: number) {
 
 export default class HotelBedFileRepo {
   static async createFromZip(mode: "full" | "update" = "full") {
-    const url = `${BASE_URL}/${mode}`;
-    const headers = { "Api-Key": "f513d78a7046ca883c02bd80926aa1b7" };
-    if (mode === "full") {
-      console.log("🧹 Cleaning Database before full feed...");
-      await this.cleanDatabase();
-    }
-    const response = await axios.get(url, {
-      headers,
-      responseType: "stream",
-      timeout: 0,
-    });
+    // const url = `${BASE_URL}/${mode}`;
+    // const headers = { "Api-Key": "f513d78a7046ca883c02bd80926aa1b7" };
+    // if (mode === "full") {
+    //   console.log("🧹 Cleaning Database before full feed...");
+    //   await this.cleanDatabase();
+    // }
+    // const response = await axios.get(url, {
+    //   headers,
+    //   responseType: "stream",
+    //   timeout: 0,
+    // });
 
-    const version = response.headers["x-version"];
-    if (!version) throw new Error("No X-Version found in response.");
+    // const version = response.headers["x-version"];
+    // if (!version) throw new Error("No X-Version found in response.");
 
-    const totalLength = parseInt(response.headers["content-length"] || "0", 10);
+    // const totalLength = parseInt(response.headers["content-length"] || "0", 10);
 
-    const zipPath = path.join(
-      __dirname,
-      `../../../../downloads/hotelbeds_${mode}_${version}.zip`
-    );
+    // const zipPath = path.join(
+    //   __dirname,
+    //   `../../../../downloads/hotelbeds_${mode}_${version}.zip`
+    // );
+    // const extractPath = path.join(
+    //   __dirname,
+    //   `../../../../downloads/hotelbeds_${mode}_${version}`
+    // );
+
     const extractPath = path.join(
       __dirname,
-      `../../../../downloads/hotelbeds_${mode}_${version}`
+      `../../../../downloads/fullrates_v1`
     );
+    // await fs.promises.mkdir(path.dirname(zipPath), { recursive: true });
 
-    await fs.promises.mkdir(path.dirname(zipPath), { recursive: true });
+    // const writer = fs.createWriteStream(zipPath);
 
-    const writer = fs.createWriteStream(zipPath);
+    // let downloaded = 0;
+    // let bar: ProgressBar | null = null;
+    // let spinner: any = null;
 
-    let downloaded = 0;
-    let bar: ProgressBar | null = null;
-    let spinner: any = null;
+    // if (totalLength > 0) {
+    //   // ✅ Normal Progress Bar
+    //   bar = new ProgressBar(
+    //     "📥 Downloading [:bar] :percent :etas (:downloaded / :total)",
+    //     {
+    //       width: 40,
+    //       complete: "=",
+    //       incomplete: " ",
+    //       total: totalLength,
+    //     }
+    //   );
+    // } else {
+    //   // ⚡ Fallback Spinner (no content-length)
+    //   spinner = ora("📥 Downloading... 0 MB").start();
+    // }
 
-    if (totalLength > 0) {
-      // ✅ Normal Progress Bar
-      bar = new ProgressBar(
-        "📥 Downloading [:bar] :percent :etas (:downloaded / :total)",
-        {
-          width: 40,
-          complete: "=",
-          incomplete: " ",
-          total: totalLength,
-        }
-      );
-    } else {
-      // ⚡ Fallback Spinner (no content-length)
-      spinner = ora("📥 Downloading... 0 MB").start();
-    }
+    // response.data.on("data", (chunk: Buffer) => {
+    //   downloaded += chunk.length;
+    //   if (bar) {
+    //     bar.tick(chunk.length, {
+    //       downloaded: formatBytes(downloaded),
+    //       total: formatBytes(totalLength),
+    //     });
+    //   } else if (spinner) {
+    //     spinner.text = `📥 Downloaded ${formatBytes(downloaded)} (size unknown)`;
+    //   }
+    // });
 
-    response.data.on("data", (chunk: Buffer) => {
-      downloaded += chunk.length;
-      if (bar) {
-        bar.tick(chunk.length, {
-          downloaded: formatBytes(downloaded),
-          total: formatBytes(totalLength),
-        });
-      } else if (spinner) {
-        spinner.text = `📥 Downloaded ${formatBytes(downloaded)} (size unknown)`;
-      }
-    });
+    // await new Promise((resolve, reject) => {
+    //   response.data.pipe(writer);
+    //   // @ts-ignore
+    //   writer.on("finish", resolve);
+    //   writer.on("error", reject);
+    // });
 
-    await new Promise((resolve, reject) => {
-      response.data.pipe(writer);
-      // @ts-ignore
-      writer.on("finish", resolve);
-      writer.on("error", reject);
-    });
+    // if (spinner) spinner.succeed(`✅ Download complete: ${formatBytes(downloaded)}`);
 
-    if (spinner) spinner.succeed(`✅ Download complete: ${formatBytes(downloaded)}`);
+    // console.log(`\n✅ File saved: ${zipPath}`);
 
-    console.log(`\n✅ File saved: ${zipPath}`);
-
-    const zip = new AdmZip(zipPath);
-    zip.extractAllTo(extractPath, true);
-    console.log(`📂 Extracted to: ${extractPath}`);
+    // const zip = new AdmZip(zipPath);
+    // zip.extractAllTo(extractPath, true);
+    // console.log(`📂 Extracted to: ${extractPath}`);
 
     await this.processDir(extractPath, mode);
     // ✅ Process complete hone ke baad cleanup
-    try {
-      await fs.promises.unlink(zipPath); // delete zip file
-      await fs.promises.rm(extractPath, { recursive: true, force: true }); // delete extracted folder
-      console.log("🗑️ Cleaned up downloaded files & extracted folder.");
-    } catch (err: any) {
-      console.error("⚠️ Cleanup failed:", err.message);
-    }
+    // try {
+    //   await fs.promises.unlink(zipPath); // delete zip file
+    //   await fs.promises.rm(extractPath, { recursive: true, force: true }); // delete extracted folder
+    //   console.log("🗑️ Cleaned up downloaded files & extracted folder.");
+    // } catch (err: any) {
+    //   console.error("⚠️ Cleanup failed:", err.message);
+    // }
     return { result: `${mode} Feed Applied In DB` };
   }
   private static async cleanDatabase() {

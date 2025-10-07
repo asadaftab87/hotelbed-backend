@@ -10,22 +10,24 @@ function toMySQLDateString(value: string | Date | null): string | null {
 }
 
 const BOOLEAN_FIELDS = [
-  "noHotelFlag","dailyPriceFlag","releaseDaysFlag","opaqueFlag","fixRateFlag",
-  "sellingPriceFlag","activeFlag","checkInFlag","checkOutFlag","stopSalesFlag",
+  "noHotel","dailyPrice","releaseDays","opaque","fixRate",
+  "sellingPrice","activeFlag","checkInFlag","checkOutFlag","stopSalesFlag",
   "perPaxFlag","monFlag","tueFlag","wedFlag","thuFlag","friFlag","satFlag","sunFlag",
-  "isActive"
+  "mandatoryFlag","includedFlag","perDateFlag","isIncluded","validForCountry",
+  "isPerService","includedInPrice","isPerNight","isPerPax"
 ];
 
 const INT_FIELDS = [
-  "releaseDays","allotment","minChildAge","maxChildAge","maxRooms","minAdults",
+  "allotment","minChildAge","maxChildAge","maxRooms","minAdults",
   "minChildren","maxAdults","maxChildren","maxInfants","daysBeforeCheckin",
-  "standardCapacity","minPax","maxPax"
+  "standardCapacity","minPax","maxPax","minimumAge","maximumAge",
+  "maximumNumberOfNights"
 ];
 
 const FLOAT_FIELDS_NULLABLE = [
   "genericRate","specificRate","amount","netPrice","publicPrice",
   "marketPrice","amountSupplement","percentageSupplement","percentage",
-  "taxRate","taxAmount"
+  "adultAmount","childAmount","ageAmount"
 ];
 
 export function mapRow(section: string, rows: Record<string, any>[]) {

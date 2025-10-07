@@ -51,60 +51,59 @@ model HotelBedFile {
   extraSupplements ExtraSupplement[]
   groups           Group[]
   offers           Offer[]
-  serviceInfoIn    ServiceInfoIn[]
-  serviceInfoAp    ServiceInfoAp[]
-  serviceInfoCf    ServiceInfoCf[]
-  serviceInfoA     ServiceInfoA[]
+  clients          Client[]
+  validMarkets     ValidMarket[]
+  handlingFees     HandlingFee[]
   taxes            Tax[]
 }
 
-/// Contract info (CCON)
+/// Contract info (CCON) - 26 fields from documentation
 model Contract {
   id           Int          @id @default(autoincrement())
   hotelBedId   Int
   hotelBedFile HotelBedFile @relation(fields: [hotelBedId], references: [id])
 
-  externalInventoryFlag String?
-  destinationCode       String?
-  officeCode            String?
-  contractNumber        String?
-  contractName          String?
-  companyCode           String?
-  serviceType           String?
-  hotelCode             String?
-  giataHotelCode        String?
-  startDate             DateTime?
-  endDate               DateTime?
-  noHotelFlag           Boolean?
-  currency              String?
-  baseBoard             String?
-  classification        String?
-  paymentModel          String?
-  dailyPriceFlag        Boolean?
-  releaseDaysFlag       Boolean?
-  minChildAge           Int?
-  maxChildAge           Int?
-  opaqueFlag            Boolean?
-  fixRateFlag           Boolean?
-  contractType          String?
-  maxRooms              Int?
-  hotelContent          String?
-  sellingPriceFlag      Boolean?
+  externalInventory String?
+  destinationCode   String?
+  officeCode        String?
+  contractNumber    String?
+  contractName      String?
+  companyCode       String?
+  serviceType       String?
+  hotelCode         String?
+  giataHotelCode    String?
+  initialDate       DateTime?
+  endDate           DateTime?
+  noHotel           Boolean?
+  currency          String?
+  baseBoard         String?
+  classification    String?
+  paymentModel      String?
+  dailyPrice        Boolean?
+  releaseDays       Boolean?
+  minChildAge       Int?
+  maxChildAge       Int?
+  opaque            Boolean?
+  fixRate           Boolean?
+  contractType      String?
+  maxRooms          Int?
+  hotelContent      String?
+  sellingPrice      Boolean?
 }
 
-/// Promotions (CNPR)
+/// Promotions (CNPR) - 7 fields from documentation
 model Promotion {
   id           Int          @id @default(autoincrement())
   hotelBedId   Int
   hotelBedFile HotelBedFile @relation(fields: [hotelBedId], references: [id])
 
-  promotionId   String?
-  promotionName String?
-  startDate     DateTime?
-  endDate       DateTime?
-  applyFrom     String?
-  applyTo       String?
-  activeFlag    Boolean?
+  code                    String?
+  description             String?
+  initialDate             DateTime?
+  finalDate               DateTime?
+  applicationInitialDate  DateTime?
+  applicationFinalDate    DateTime?
+  isIncluded              Boolean?
 }
 
 /// Room info (CNHA)
@@ -179,7 +178,7 @@ model MinMaxStay {
   daysRules      String? // e.g., "3-5" meaning min 3, max 5 nights
 }
 
-/// Supplements (CNSR)
+/// Supplements (CNSR) - Currently empty in data but defined in documentation
 model Supplement {
   id           Int          @id @default(autoincrement())
   hotelBedId   Int
@@ -208,7 +207,7 @@ model Supplement {
   marketPrice          Float?
 }
 
-/// Stop sales (CNPV)
+/// Stop sales (CNPV) - Currently empty in data but defined in documentation
 model StopSale {
   id           Int          @id @default(autoincrement())
   hotelBedId   Int
@@ -268,9 +267,36 @@ model ExtraSupplement {
   hotelBedId   Int
   hotelBedFile HotelBedFile @relation(fields: [hotelBedId], references: [id])
 
-  supplementCode String?
-  description    String?
-  amount         Float?
+  startDate         DateTime?
+  endDate           DateTime?
+  lastUpdate        DateTime?
+  releaseEndDate    String?
+  supplementCode    String?
+  chargeType        String?
+  mandatoryFlag     Boolean?
+  includedFlag      Boolean?
+  daysBeforeCheckin Int?
+  applicability     String?
+  amount            Float?
+  description       String?
+  perPaxFlag        Boolean?
+  roomType          String?
+  rateCode          String?
+  boardCode         String?
+  characteristic    String?
+  minPax            Int?
+  maxPax            Int?
+  minAge            Int?
+  maxAge            Int?
+  monFlag           Boolean?
+  tueFlag           Boolean?
+  wedFlag           Boolean?
+  thuFlag           Boolean?
+  friFlag           Boolean?
+  satFlag           Boolean?
+  sunFlag           Boolean?
+  netPrice          Float?
+  publicPrice       Float?
 }
 
 /// Groups (CNGR)
@@ -293,57 +319,76 @@ model Offer {
   description String?
 }
 
-/// Service Info In (SIIN)
-model ServiceInfoIn {
+/// Client/Names (CNNH) - No hotel contracts
+model Client {
   id           Int          @id @default(autoincrement())
   hotelBedId   Int
   hotelBedFile HotelBedFile @relation(fields: [hotelBedId], references: [id])
   createdAt    DateTime     @default(now())
 
-  serviceCode String?
-  description String?
-  amount      Float?
-  currency    String?
+  clientCode String?
+  clientName String?
+  clientType String?
+  activeFlag Boolean?
 }
 
-/// Service Info Ap (SIAP)
-model ServiceInfoAp {
+/// Valid Markets (CNCL) - 2 fields from documentation
+model ValidMarket {
   id           Int          @id @default(autoincrement())
   hotelBedId   Int
   hotelBedFile HotelBedFile @relation(fields: [hotelBedId], references: [id])
   createdAt    DateTime     @default(now())
 
-  serviceCode  String?
-  description  String?
+  countryCode      String?
+  validForCountry  Boolean?
+}
+
+/// Handling Fees (CNHF) - 13 fields from documentation
+model HandlingFee {
+  id           Int          @id @default(autoincrement())
+  hotelBedId   Int
+  hotelBedFile HotelBedFile @relation(fields: [hotelBedId], references: [id])
+  createdAt    DateTime     @default(now())
+
+  initialDate  DateTime?
+  finalDate    DateTime?
+  code         String?
+  rate         String?
+  type         String?
   amount       Float?
-  applicableTo String?
+  percentage   Float?
+  adultAmount  Float?
+  childAmount  Float?
+  minimumAge   Int?
+  maximumAge   Int?
+  ageAmount    Float?
+  isPerService Boolean?
 }
 
-/// Service Info Cf (SICF)
-model ServiceInfoCf {
+/// Tax Breakdown (ATAX) - 17 fields from documentation
+model Tax {
   id           Int          @id @default(autoincrement())
   hotelBedId   Int
   hotelBedFile HotelBedFile @relation(fields: [hotelBedId], references: [id])
   createdAt    DateTime     @default(now())
 
-  serviceCode String?
-  description String?
-  feeType     String?
-  amount      Float?
-  currency    String?
-}
-
-/// Service Info A (SIA)
-model ServiceInfoA {
-  id           Int          @id @default(autoincrement())
-  hotelBedId   Int
-  hotelBedFile HotelBedFile @relation(fields: [hotelBedId], references: [id])
-  createdAt    DateTime     @default(now())
-
-  serviceCode   String?
-  description   String?
-  availability  String?
-  notes         String?
+  initialDate            DateTime?
+  finalDate              DateTime?
+  roomCode               String?
+  boardCode              String?
+  taxCode                String?
+  includedInPrice        Boolean?
+  maximumNumberOfNights  Int?
+  minimumAge             Int?
+  maximumAge             Int?
+  isPerNight             Boolean?
+  isPerPax               Boolean?
+  amount                 Float?
+  percentage             Float?
+  currency               String?
+  applyOver              String?
+  marketCode             String?
+  legalDescription       String?
 }
 model Role {
   id        String   @id @default(uuid())
@@ -415,42 +460,19 @@ model HotelMaster {
   hotelBedFile HotelBedFile @relation(fields: [hotelBedId], references: [id])
   createdAt    DateTime     @default(now())
 
-  hotelCode        String?
-  hotelName        String?
-  hotelCategory    String?
-  hotelType        String?
-  destinationCode  String?
-  destinationName  String?
-  zoneCode         String?
-  zoneName         String?
-  countryCode      String?
-  countryName      String?
-  stateCode        String?
-  stateName        String?
-  cityCode         String?
-  cityName         String?
-  latitude         String?
-  longitude        String?
-  address          String?
-  postalCode       String?
-  phone            String?
-  fax              String?
-  email            String?
-  website          String?
-  chainCode        String?
-  chainName        String?
-  accommodationType String?
-  segmentCodes     String?
-  coordinates       String?
-  lastUpdate       DateTime?
-  ranking          String?
-  currency         String?
-  giataHotelCode   String?
-  giataDestinationCode String?
-  giataZoneCode    String?
-  giataCountryCode String?
-  giataStateCode   String?
-  giataCityCode    String?
+  hotelCode          String?
+  hotelCategory      String?
+  destinationCode    String?
+  chainCode          String?
+  contractMarket     String?
+  ranking            String?
+  noHotelFlag        Boolean?
+  countryCode        String?
+  accommodationType  String?
+  accommodationCode  String?
+  latitude           String?
+  longitude          String?
+  hotelName          String?
 }
 
 /// Board Master Information (BOARD)
@@ -460,25 +482,7 @@ model BoardMaster {
   hotelBedFile HotelBedFile @relation(fields: [hotelBedId], references: [id])
   createdAt    DateTime     @default(now())
 
-  boardCode        String?
-  boardName         String?
-  boardDescription  String?
-}
-
-/// Tax Information (ATAX)
-model Tax {
-  id           Int          @id @default(autoincrement())
-  hotelBedId   Int
-  hotelBedFile HotelBedFile @relation(fields: [hotelBedId], references: [id])
-  createdAt    DateTime     @default(now())
-
-  taxCode        String?
-  taxName        String?
-  taxType        String?
-  taxRate        String?
-  taxAmount      String?
-  taxCategory    String?
-  taxDescription String?
-  isActive       Boolean?
-  lastUpdate     DateTime?
+  boardCode String?
+  boardType String?
+  boardName String?
 }

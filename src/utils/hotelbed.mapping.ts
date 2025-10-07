@@ -4,53 +4,30 @@ export const sectionMappers: Record<string, string[]> = {
   // --- Hotel Master Information ---
   HOTEL: [
     "hotelCode",
-    "hotelName", 
     "hotelCategory",
-    "hotelType",
     "destinationCode",
-    "destinationName",
-    "zoneCode",
-    "zoneName",
+    "chainCode",
+    "contractMarket",
+    "ranking",
+    "noHotelFlag",
     "countryCode",
-    "countryName",
-    "stateCode",
-    "stateName",
-    "cityCode",
-    "cityName",
+    "accommodationType",
+    "accommodationCode",
     "latitude",
     "longitude",
-    "address",
-    "postalCode",
-    "phone",
-    "fax",
-    "email",
-    "website",
-    "chainCode",
-    "chainName",
-    "accommodationType",
-    "segmentCodes",
-    "coordinates",
-    "lastUpdate",
-    "ranking",
-    "currency",
-    "giataHotelCode",
-    "giataDestinationCode",
-    "giataZoneCode",
-    "giataCountryCode",
-    "giataStateCode",
-    "giataCityCode"
+    "hotelName"
   ],
 
   // --- Board Master Information ---
   BOARD: [
     "boardCode",
-    "boardName",
-    "boardDescription"
+    "boardType",
+    "boardName"
   ],
 
-  // --- Contract Header ---
+  // --- Contract Header (CCON) - 26 fields from documentation ---
   CCON: [
-    "externalInventoryFlag",
+    "externalInventory",
     "destinationCode",
     "officeCode",
     "contractNumber",
@@ -59,34 +36,34 @@ export const sectionMappers: Record<string, string[]> = {
     "serviceType",
     "hotelCode",
     "giataHotelCode",
-    "startDate",
+    "initialDate",
     "endDate",
-    "noHotelFlag",
+    "noHotel",
     "currency",
     "baseBoard",
     "classification",
     "paymentModel",
-    "dailyPriceFlag",
-    "releaseDaysFlag",
+    "dailyPrice",
+    "releaseDays",
     "minChildAge",
     "maxChildAge",
-    "opaqueFlag",
-    "fixRateFlag",
+    "opaque",
+    "fixRate",
     "contractType",
     "maxRooms",
     "hotelContent",
-    "sellingPriceFlag"
+    "sellingPrice"
   ],
 
-  // --- Promotions ---
+  // --- Promotions (CNPR) - 7 fields from documentation ---
   CNPR: [
-    "promotionId",
-    "promotionName",
-    "startDate",
-    "endDate",
-    "applyFrom",
-    "applyTo",
-    "activeFlag"
+    "code",
+    "description",
+    "initialDate",
+    "finalDate",
+    "applicationInitialDate",
+    "applicationFinalDate",
+    "isIncluded"
   ],
 
   // --- Rooms ---
@@ -202,7 +179,38 @@ export const sectionMappers: Record<string, string[]> = {
   CNES: ["startDate", "endDate", "roomCode", "characteristic", "checkInFlag", "checkOutFlag"],
 
   // --- Extra Supplements ---
-  CNSU: ["supplementCode", "description", "amount"],
+  CNSU: [
+    "startDate",
+    "endDate",
+    "lastUpdate",
+    "releaseEndDate",
+    "supplementCode",
+    "chargeType",
+    "mandatoryFlag",
+    "includedFlag",
+    "daysBeforeCheckin",
+    "applicability",
+    "amount",
+    "description",
+    "perPaxFlag",
+    "roomType",
+    "rateCode",
+    "boardCode",
+    "characteristic",
+    "minPax",
+    "maxPax",
+    "minAge",
+    "maxAge",
+    "monFlag",
+    "tueFlag",
+    "wedFlag",
+    "thuFlag",
+    "friFlag",
+    "satFlag",
+    "sunFlag",
+    "netPrice",
+    "publicPrice"
+  ],
 
   // --- Groups ---
   CNGR: ["groupCode", "description"],
@@ -210,28 +218,47 @@ export const sectionMappers: Record<string, string[]> = {
   // --- Offers ---
   CNOE: ["offerCode", "description"],
 
-  // --- Service Info In ---
-  SIIN: ["serviceCode", "description", "amount", "currency"],
+  // --- Client/Names (CNNH) ---
+  CNNH: ["clientCode", "clientName", "clientType", "activeFlag"],
 
-  // --- Service Info Ap ---
-  SIAP: ["serviceCode", "description", "amount", "applicableTo"],
+  // --- Valid Markets (CNCL) - 2 fields from documentation ---
+  CNCL: ["countryCode", "validForCountry"],
 
-  // --- Service Info Cf ---
-  SICF: ["serviceCode", "description", "feeType", "amount", "currency"],
+  // --- Handling Fees (CNHF) - 13 fields from documentation ---
+  CNHF: [
+    "initialDate",
+    "finalDate",
+    "code",
+    "rate",
+    "type",
+    "amount",
+    "percentage",
+    "adultAmount",
+    "childAmount",
+    "minimumAge",
+    "maximumAge",
+    "ageAmount",
+    "isPerService"
+  ],
 
-  // --- Service Info A ---
-  SIA: ["serviceCode", "description", "availability", "notes"],
-
-  // --- Tax Information ---
+  // --- Tax Breakdown (ATAX) - 16 fields from documentation ---
   ATAX: [
+    "initialDate",
+    "finalDate",
+    "roomCode",
+    "boardCode",
     "taxCode",
-    "taxName",
-    "taxType",
-    "taxRate",
-    "taxAmount",
-    "taxCategory",
-    "taxDescription",
-    "isActive",
-    "lastUpdate"
+    "includedInPrice",
+    "maximumNumberOfNights",
+    "minimumAge",
+    "maximumAge",
+    "isPerNight",
+    "isPerPax",
+    "amount",
+    "percentage",
+    "currency",
+    "applyOver",
+    "marketCode",
+    "legalDescription"
   ],
 };
