@@ -80,7 +80,7 @@ export const sectionMappers: Record<string, string[]> = {
     "minChildren"
   ],
 
-  // --- Restrictions (Inventory) ---
+  // --- Restrictions (CNIN) - Original restriction data ---
   CNIN: [
     "startDate",
     "endDate",

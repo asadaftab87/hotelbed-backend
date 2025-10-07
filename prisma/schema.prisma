@@ -23,12 +23,7 @@ enum TokenType {
   TWO_FACTOR_AUTHENTICATION
   FORGOT_PASSWORD
 }
-model HotelBedVersion {
-  id         Int      @id @default(autoincrement())
-  fileName   String   @unique   // name of the ZIP or version identifier
-  createdAt  DateTime @default(now())
-  updatedAt  DateTime @updatedAt
-}
+
 /// Main hotel file record
 model HotelBedFile {
   id        String   @id @default(uuid())
@@ -41,6 +36,7 @@ model HotelBedFile {
   promotions       Promotion[]
   rooms            Room[]
   restrictions     Restriction[]
+  inventories      Inventory[]
   costs            Cost[]
   minMaxStays      MinMaxStay[]
   supplements      Supplement[]
@@ -124,7 +120,7 @@ model Room {
   minChildren      Int?
 }
 
-/// Restrictions (CNIN)
+/// Restrictions (CNIN) - Original restriction data
 model Restriction {
   id           String       @id @default(uuid())
   hotelBedId   String
@@ -137,7 +133,31 @@ model Restriction {
   rateCode        String?
   releaseDays     Int?
   allotment       Int?
-  inventoryTuples String? // raw string if needed
+  inventoryTuples String?
+}
+
+/// Inventory Management (Derived from CNIN for client requirement)
+model Inventory {
+  id              String       @id @default(uuid())
+  hotelBedId      String
+  hotelBedFile    HotelBedFile @relation(fields: [hotelBedId], references: [id])
+  createdAt       DateTime     @default(now())
+
+  calendarDate    DateTime     // Date for which inventory is tracked
+  hotelCode       String?      // Hotel identifier
+  roomCode        String?      // Room type
+  characteristic  String?      // Room characteristic
+  ratePlanId      String?      // Rate plan/code
+  allotment       Int?         // Available room count
+  stopSale        Boolean?     // Stop sale flag
+  releaseDays     Int?         // Release days before check-in
+  cta             Int?         // Close to arrival (days)
+  ctd             Int?         // Close to departure (days)
+  minNights       Int?         // Minimum nights required
+  maxNights       Int?         // Maximum nights allowed
+
+  @@index([calendarDate, hotelCode])
+  @@index([hotelCode, roomCode, calendarDate])
 }
 
 /// Costs/Prices (CNCT)

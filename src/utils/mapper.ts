@@ -14,14 +14,14 @@ const BOOLEAN_FIELDS = [
   "sellingPrice","activeFlag","checkInFlag","checkOutFlag","stopSalesFlag",
   "perPaxFlag","monFlag","tueFlag","wedFlag","thuFlag","friFlag","satFlag","sunFlag",
   "mandatoryFlag","includedFlag","perDateFlag","isIncluded","validForCountry",
-  "isPerService","includedInPrice","isPerNight","isPerPax"
+  "isPerService","includedInPrice","isPerNight","isPerPax","stopSale"
 ];
 
 const INT_FIELDS = [
   "allotment","minChildAge","maxChildAge","maxRooms","minAdults",
   "minChildren","maxAdults","maxChildren","maxInfants","daysBeforeCheckin",
   "standardCapacity","minPax","maxPax","minimumAge","maximumAge",
-  "maximumNumberOfNights"
+  "maximumNumberOfNights","cta","ctd","minNights","maxNights"
 ];
 
 const FLOAT_FIELDS_NULLABLE = [

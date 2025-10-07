@@ -199,6 +199,116 @@ export default class HotelBedFileRepo {
     return sections;
   }
 
+  private static async buildInventoryTable(
+    sections: Record<string, any[]>,
+    fileId: string,
+    pool: mysql.Pool
+  ) {
+    const cninData = sections.CNIN || [];
+    const cnpvData = sections.CNPV || []; // Stop sales
+    const cnemData = sections.CNEM || []; // Min/Max nights
+    const cconData = sections.CCON || []; // Contract for hotel code
+
+    if (!cninData.length) return;
+
+    // Get hotel code from contract
+    const hotelCode = cconData[0]?.hotelCode || null;
+
+    // Build lookup maps for performance
+    const stopSaleMap = new Map<string, boolean>();
+    cnpvData.forEach(pv => {
+      const key = `${pv.roomCode}|${pv.characteristic}|${pv.rateCode}`;
+      stopSaleMap.set(key, pv.stopSalesFlag === true);
+    });
+
+    const minMaxMap = new Map<string, { minNights?: number; maxNights?: number }>();
+    cnemData.forEach(em => {
+      const key = `${em.roomCode}|${em.characteristic}|${em.boardCode}`;
+      // Parse daysRules like "3-5" -> min=3, max=5
+      const [min, max] = (em.daysRules || "").split("-").map(Number);
+      minMaxMap.set(key, { 
+        minNights: !isNaN(min) ? min : null, 
+        maxNights: !isNaN(max) ? max : null 
+      });
+    });
+
+    // Build inventory rows with parsed daily inventory data
+    const inventoryRows: any[] = [];
+    
+    cninData.forEach(cnin => {
+      const lookupKey = `${cnin.roomCode}|${cnin.characteristic}|${cnin.rateCode || ''}`;
+      const stopSale = stopSaleMap.get(lookupKey) || null;
+      const minMax = minMaxMap.get(`${cnin.roomCode}|${cnin.characteristic}|`) || {};
+
+      // Parse inventoryTuples: "(0,10)(0,10)(0,10)..." -> daily (releaseDays, allotment)
+      const tuples = cnin.inventoryTuples || "";
+      const dailyInventory = tuples.match(/\((\d+),(\d+)\)/g) || [];
+
+      // If no tuples, create one record with null values
+      if (dailyInventory.length === 0) {
+        inventoryRows.push({
+          id: randomUUID(),
+          hotelBedId: fileId,
+          calendarDate: cnin.startDate,
+          hotelCode: hotelCode,
+          roomCode: cnin.roomCode,
+          characteristic: cnin.characteristic,
+          ratePlanId: cnin.rateCode || null,
+          allotment: cnin.allotment || null,
+          stopSale: stopSale,
+          releaseDays: cnin.releaseDays || null,
+          cta: cnin.releaseDays || null,
+          ctd: 0,
+          minNights: minMax.minNights || null,
+          maxNights: minMax.maxNights || null,
+          createdAt: new Date().toISOString().slice(0, 19).replace('T', ' ')
+        });
+        return;
+      }
+
+      // Create one inventory record per day from tuples
+      dailyInventory.forEach((tuple: string, dayIndex: number) => {
+        const match = tuple.match(/\((\d+),(\d+)\)/);
+        if (!match) return;
+
+        const releaseDays = parseInt(match[1], 10);
+        const allotment = parseInt(match[2], 10);
+
+        // Calculate actual calendar date (startDate + dayIndex)
+        const calendarDate = new Date(cnin.startDate);
+        calendarDate.setDate(calendarDate.getDate() + dayIndex);
+
+        // Calculate CTA/CTD
+        const cta = releaseDays;
+        const ctd = 0;
+
+        inventoryRows.push({
+          id: randomUUID(),
+          hotelBedId: fileId,
+          calendarDate: calendarDate.toISOString().slice(0, 19).replace('T', ' '),
+          hotelCode: hotelCode,
+          roomCode: cnin.roomCode,
+          characteristic: cnin.characteristic,
+          ratePlanId: cnin.rateCode || null,
+          allotment: allotment,
+          stopSale: stopSale || allotment === 0,
+          releaseDays: releaseDays,
+          cta: cta,
+          ctd: ctd,
+          minNights: minMax.minNights || null,
+          maxNights: minMax.maxNights || null,
+          createdAt: new Date().toISOString().slice(0, 19).replace('T', ' ')
+        });
+      });
+    });
+
+    // Bulk insert into Inventory table
+    for (let i = 0; i < inventoryRows.length; i += BATCH_SIZE) {
+      const chunk = inventoryRows.slice(i, i + BATCH_SIZE);
+      await bulkInsertRaw("Inventory", chunk, pool, { onDuplicate: true });
+    }
+  }
+
   private static async processDir(dir: string, mode: "full" | "update") {
     const files = await fs.promises.readdir(dir, { withFileTypes: true });
     const limit = pLimit(CONCURRENCY);
@@ -222,6 +332,9 @@ export default class HotelBedFileRepo {
 
             const jsonData = await this.parseFileToJson(fullPath);
 
+            // Store mapped data for later combination
+            const processedSections: Record<string, any[]> = {};
+
             for (const [section, rows] of Object.entries(jsonData)) {
               if (!rows.length) continue;
               const mappedRows = mapRow(section, rows).map(r => ({
@@ -229,6 +342,9 @@ export default class HotelBedFileRepo {
                 hotelBedId: fileId,
                 ...r,
               }));
+
+              // Store for later use
+              processedSections[section] = mappedRows;
 
               for (let i = 0; i < mappedRows.length; i += BATCH_SIZE) {
                 const chunk = mappedRows.slice(i, i + BATCH_SIZE);
@@ -241,6 +357,9 @@ export default class HotelBedFileRepo {
                 });
               }
             }
+
+            // ✅ After all sections processed, build Inventory from combined data
+            await this.buildInventoryTable(processedSections, fileId, pool);
 
             console.log(`✅ Done ${file.name}`);
           } catch (err: any) {
