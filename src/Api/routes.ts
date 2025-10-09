@@ -4,6 +4,7 @@ import { env } from '../config/globals';
 import { registerApiRoutes } from './Components';
 import registerErrorHandler from "../middleware/ErrorHandler"
 import registerMiddleware from '../middleware/Register';
+import { metricsService } from '../services/metrics.service';
 import Logger from '../core/Logger';
 
 /**
@@ -19,7 +20,15 @@ export function initRestRoutes(router: Router): void {
   const superAdminPrefix = `/api/${env.API_VERSION}/superadmin`;
   const adminPrefix = `/api/${env.API_VERSION}/admin`;
   const userPrefix = `/api/${env.API_VERSION}/user`;
+  
   Logger.info(`Initializing REST routes on ${prefix}`);
+  
+  // Metrics endpoint (before middleware)
+  router.get('/metrics', metricsService.getMetricsHandler());
+  
+  // Metrics tracking middleware
+  router.use(metricsService.trackHttpRequest());
+  
   registerMiddleware(router);
   registerApiRoutes(router, prefix, appRoutesPrefix, superAdminPrefix, adminPrefix, userPrefix);
   registerErrorHandler(router);

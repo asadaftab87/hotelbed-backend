@@ -1,5 +1,6 @@
 generator client {
   provider = "prisma-client-js"
+  previewFeatures = ["fullTextIndex", "fullTextSearch"]
 }
 
 datasource db {
@@ -506,3 +507,173 @@ model BoardMaster {
   boardType String?
   boardName String?
 }
+
+// ============================================================================
+// DERIVED TABLES FOR CACHE API (per client requirements)
+// ============================================================================
+
+/// Cheapest Price Per Person - Precomputed for fast "From € p.p." display
+model CheapestPricePerPerson {
+  id           String   @id @default(uuid())
+  
+  // Keys
+  hotelCode    String
+  categoryTag  String   // e.g., "city_trip", "other", "beach"
+  startDate    DateTime // First bookable date
+  nights       Int      // Number of nights
+  
+  // Result
+  boardCode    String?  // Board type (e.g., RO, BB, HB, FB)
+  pricePP      Float    // Price per person (double occupancy)
+  currency     String   @default("EUR")
+  
+  // References
+  ratePlanId   String?
+  roomCode     String?
+  contractId   String?
+  
+  // Metadata
+  derivedAt    DateTime @default(now())
+  expiresAt    DateTime? // Optional TTL for cache invalidation
+  
+  @@index([hotelCode, categoryTag])
+  @@index([categoryTag, pricePP])
+  @@index([startDate])
+  @@index([derivedAt])
+  @@unique([hotelCode, categoryTag, startDate, nights])
+}
+
+/// Search Index - Aggregated data for fast filtering and sorting
+model SearchIndex {
+  id              String   @id @default(uuid())
+  
+  // Keys
+  hotelCode       String   @unique
+  destinationCode String?
+  countryCode     String?
+  zoneCode        String?
+  
+  // Hotel Info
+  hotelName       String?
+  categoryTag     String?  // Travel category
+  rating          Float?
+  chainCode       String?
+  accommodationType String?
+  
+  // Price aggregates
+  minPricePP      Float?
+  maxPricePP      Float?
+  avgPricePP      Float?
+  
+  // Location
+  latitude        Float?
+  longitude       Float?
+  beachDistanceM  Int?
+  centerDistanceM Int?
+  
+  // Availability flags
+  hasAvailability Boolean  @default(false)
+  hasPromotion    Boolean  @default(false)
+  lastMinute      Boolean  @default(false)
+  
+  // Metadata
+  lastUpdated     DateTime @default(now())
+  
+  @@index([destinationCode, categoryTag, minPricePP])
+  @@index([countryCode])
+  @@index([hasAvailability, hasPromotion])
+  @@fulltext([hotelName])
+}
+
+/// Hotel Amenities (many-to-many)
+model HotelAmenity {
+  id           String   @id @default(uuid())
+  hotelCode    String
+  amenityCode  String   // e.g., "WIFI", "POOL", "SPA", "PARKING"
+  amenityName  String?
+  createdAt    DateTime @default(now())
+  
+  @@unique([hotelCode, amenityCode])
+  @@index([amenityCode])
+}
+
+/// Landmarks for distance filtering
+model Landmark {
+  id          String   @id @default(uuid())
+  name        String
+  type        String   // e.g., "AIRPORT", "BEACH", "MUSEUM", "STATION"
+  latitude    Float
+  longitude   Float
+  city        String?
+  countryCode String?
+  
+  hotelLandmarks HotelLandmark[]
+  
+  @@index([type, countryCode])
+}
+
+/// Hotel to Landmark distances
+model HotelLandmark {
+  id          String    @id @default(uuid())
+  hotelCode   String
+  landmarkId  String
+  landmark    Landmark  @relation(fields: [landmarkId], references: [id])
+  distanceM   Int       // Distance in meters
+  
+  @@unique([hotelCode, landmarkId])
+  @@index([hotelCode])
+  @@index([landmarkId])
+}
+
+/// Foreign Exchange Rates for multi-currency support
+model FxRate {
+  id           String   @id @default(uuid())
+  date         DateTime
+  fromCurrency String
+  toCurrency   String
+  rate         Float
+  createdAt    DateTime @default(now())
+  
+  @@unique([date, fromCurrency, toCurrency])
+  @@index([date])
+}
+
+// ============================================================================
+// STAGING TABLES (for idempotent ingestion)
+// ============================================================================
+
+/// Staging table for raw ingest data before merging
+model StagingIngest {
+  id              String   @id @default(uuid())
+  batchId         String   // Unique batch identifier
+  section         String   // API section (e.g., HOTEL, CCON, CNIN)
+  rawData         String   @db.LongText // JSON blob of raw data
+  hash            String   // MD5/SHA256 hash for delta detection
+  lastModified    DateTime?
+  ingestedAt      DateTime @default(now())
+  processed       Boolean  @default(false)
+  
+  @@index([batchId, section])
+  @@index([processed])
+  @@index([ingestedAt])
+}
+
+/// Ingest job tracking for monitoring
+model IngestJob {
+  id              String   @id @default(uuid())
+  batchId         String   @unique
+  mode            String   // "full" or "update"
+  status          String   // "pending", "running", "completed", "failed"
+  startedAt       DateTime @default(now())
+  completedAt     DateTime?
+  error           String?  @db.Text
+  recordsIngested Int      @default(0)
+  recordsUpdated  Int      @default(0)
+  duration        Int?     // Duration in seconds
+  
+  @@index([status, startedAt])
+}
+
+// ============================================================================
+// ENHANCEMENTS TO EXISTING MODELS
+// ============================================================================

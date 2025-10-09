@@ -6,15 +6,65 @@ import { port, environment } from './config/globals'
 import { Server } from './Api/server'
 import Logger from './core/Logger';
 import { prisma } from "./database"
+import { redisManager } from './config/redis.config';
+import { queueManager } from './jobs/queue.manager';
+import { cronScheduler } from './jobs/cron.scheduler';
 // import { CronJob } from './utils/cronJobs';
 
 (async function main(): Promise<void> {
   try {
+    // Connect to database
+    await prisma.$connect();
+    Logger.info('✅ Database connected');
 
-    await prisma.$connect()
+    // Connect to Redis (Optional - app will work without it)
+    const redisEnabled = process.env.ENABLE_REDIS !== 'false';
+    if (redisEnabled) {
+      try {
+        await redisManager.connect();
+        Logger.info('✅ Redis connected');
+      } catch (error) {
+        Logger.warn('⚠️ Redis connection failed, continuing without cache');
+        Logger.debug('Redis error:', error);
+      }
+    } else {
+      Logger.info('⏭️ Redis disabled via environment variable');
+    }
+
+    // Initialize queue system (BullMQ) - Optional
+    const queueEnabled = process.env.ENABLE_QUEUE !== 'false' && redisManager.isReady();
+    if (queueEnabled) {
+      try {
+        await queueManager.initialize();
+        Logger.info('✅ Queue system initialized');
+      } catch (error) {
+        Logger.warn('⚠️ Queue system initialization failed, continuing without queue');
+        Logger.debug('Queue error:', error);
+      }
+    } else {
+      Logger.info('⏭️ Queue system disabled (Redis not available or disabled)');
+    }
+
+    // Initialize cron scheduler - Optional
+    const cronEnabled = process.env.ENABLE_CRON !== 'false';
+    if (cronEnabled) {
+      try {
+        cronScheduler.initialize();
+        Logger.info('✅ Cron scheduler initialized');
+      } catch (error) {
+        Logger.warn('⚠️ Cron scheduler initialization failed, continuing without scheduler');
+        Logger.debug('Cron error:', error);
+      }
+    } else {
+      Logger.info('⏭️ Cron scheduler disabled via environment variable');
+    }
 
     process.on('uncaughtException', (e) => {
-      Logger.error(e);
+      Logger.error('Uncaught exception:', e);
+    });
+
+    process.on('unhandledRejection', (reason, promise) => {
+      Logger.error('Unhandled rejection at:', promise, 'reason:', reason);
     });
 
     const app: express.Application = new Server().app
@@ -23,12 +73,56 @@ import { prisma } from "./database"
     server.listen(port)
 
     server.on('listening', () => {
-      Logger.info(`node server is listening on port ${port} in ${environment} mode`)
-    })
-    // new CronJob()
+      Logger.info(`🚀 Server listening on port ${port} in ${environment} mode`);
+      Logger.info(`📊 API docs: http://localhost:${port}/api/v1`);
+      Logger.info(`🔍 Search: http://localhost:${port}/api/v1/search`);
+      Logger.info(`🏨 Hotels: http://localhost:${port}/api/v1/hotels`);
+    });
+
+    // Graceful shutdown
+    const shutdown = async () => {
+      Logger.info('🛑 Shutting down gracefully...');
+      
+      try {
+        // Stop cron jobs
+        cronScheduler.stopAll();
+      } catch (err) {
+        Logger.debug('Error stopping cron:', err);
+      }
+      
+      try {
+        // Close queue connections
+        await queueManager.close();
+      } catch (err) {
+        Logger.debug('Error closing queue:', err);
+      }
+      
+      try {
+        // Close Redis
+        await redisManager.disconnect();
+      } catch (err) {
+        Logger.debug('Error disconnecting Redis:', err);
+      }
+      
+      try {
+        // Close database
+        await prisma.$disconnect();
+      } catch (err) {
+        Logger.debug('Error disconnecting database:', err);
+      }
+      
+      server.close(() => {
+        Logger.info('✅ Server closed');
+        process.exit(0);
+      });
+    };
+
+    process.on('SIGTERM', shutdown);
+    process.on('SIGINT', shutdown);
 
   } catch (err: any) {
     console.log(err);
     Logger.error(err.stack);
+    process.exit(1);
   }
 })();
