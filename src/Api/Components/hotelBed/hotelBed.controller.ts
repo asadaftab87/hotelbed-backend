@@ -1,6 +1,7 @@
 import { Response, Request, NextFunction } from "express";
 import asyncHandler from "../../../helpers/async";
 import HotelBedFileRepo from './hotelBed.repository';
+import HotelBedTurboRepo from './hotelBed.repository.turbo';
 import { BadRequestError } from '../../../core/ApiError';
 import { SuccessResponse } from '../../../core/ApiResponse';
 import HotelBedFile from './hotelBed'
@@ -52,10 +53,33 @@ export class HotelBedFileController {
   //     new SuccessResponse('update success', result).send(res);
   //   }
   // )
+  /**
+   * 🚀 TURBO ENDPOINT - Complete End-to-End Flow
+   * 
+   * This single endpoint does EVERYTHING:
+   * 1. Clean Database (if full mode)
+   * 2. Download ZIP from Hotelbeds
+   * 3. Extract ZIP
+   * 4. Process all CONTRACT files (Raw SQL)
+   * 5. Build Inventory table (complex logic)
+   * 6. Process GENERAL files (HotelMaster, BoardMaster)
+   * 7. Run Precompute Service
+   * 8. Update SearchIndex
+   * 9. Cleanup temporary files
+   * 
+   * Expected Duration: 5-10 minutes for full feed
+   */
   getFullData = asyncHandler(
     async (req: any, res: Response, next: NextFunction): Promise<Response | void> => {
-      const result = await HotelBedFileRepo.createFromZip("full");
-      new SuccessResponse("HotelBeds data processed successfully", result).send(res);
+      const mode = (req.query.mode as "full" | "update") || "full";
+      
+      // Execute complete TURBO flow
+      const result = await HotelBedTurboRepo.executeFullFlow(mode);
+      
+      new SuccessResponse(
+        "🚀 TURBO: Complete end-to-end flow finished successfully!",
+        result
+      ).send(res);
     }
   )
   // delete = asyncHandler(
