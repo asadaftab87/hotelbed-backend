@@ -7,9 +7,8 @@ import { Server } from './Api/server'
 import Logger from './core/Logger';
 import { prisma } from "./database"
 import { redisManager } from './config/redis.config';
-import { queueManager } from './jobs/queue.manager';
-import { cronScheduler } from './jobs/cron.scheduler';
-// import { CronJob } from './utils/cronJobs';
+// import { queueManager } from './jobs/queue.manager';
+// import { cronScheduler } from './jobs/cron.scheduler';
 
 (async function main(): Promise<void> {
   try {
@@ -32,32 +31,32 @@ import { cronScheduler } from './jobs/cron.scheduler';
     }
 
     // Initialize queue system (BullMQ) - Optional
-    const queueEnabled = process.env.ENABLE_QUEUE !== 'false' && redisManager.isReady();
-    if (queueEnabled) {
-      try {
-        await queueManager.initialize();
-        Logger.info('✅ Queue system initialized');
-      } catch (error) {
-        Logger.warn('⚠️ Queue system initialization failed, continuing without queue');
-        Logger.debug('Queue error:', error);
-      }
-    } else {
-      Logger.info('⏭️ Queue system disabled (Redis not available or disabled)');
-    }
+    // const queueEnabled = process.env.ENABLE_QUEUE !== 'false' && redisManager.isReady();
+    // if (queueEnabled) {
+    //   try {
+    //     await queueManager.initialize();
+    //     Logger.info('✅ Queue system initialized');
+    //   } catch (error) {
+    //     Logger.warn('⚠️ Queue system initialization failed, continuing without queue');
+    //     Logger.debug('Queue error:', error);
+    //   }
+    // } else {
+    //   Logger.info('⏭️ Queue system disabled (Redis not available or disabled)');
+    // }
 
     // Initialize cron scheduler - Optional
-    const cronEnabled = process.env.ENABLE_CRON !== 'false';
-    if (cronEnabled) {
-      try {
-        cronScheduler.initialize();
-        Logger.info('✅ Cron scheduler initialized');
-      } catch (error) {
-        Logger.warn('⚠️ Cron scheduler initialization failed, continuing without scheduler');
-        Logger.debug('Cron error:', error);
-      }
-    } else {
-      Logger.info('⏭️ Cron scheduler disabled via environment variable');
-    }
+    // const cronEnabled = process.env.ENABLE_CRON !== 'false';
+    // if (cronEnabled) {
+    //   try {
+    //     cronScheduler.initialize();
+    //     Logger.info('✅ Cron scheduler initialized');
+    //   } catch (error) {
+    //     Logger.warn('⚠️ Cron scheduler initialization failed, continuing without scheduler');
+    //     Logger.debug('Cron error:', error);
+    //   }
+    // } else {
+    //   Logger.info('⏭️ Cron scheduler disabled via environment variable');
+    // }
 
     process.on('uncaughtException', (e) => {
       Logger.error('Uncaught exception:', e);
@@ -83,19 +82,19 @@ import { cronScheduler } from './jobs/cron.scheduler';
     const shutdown = async () => {
       Logger.info('🛑 Shutting down gracefully...');
       
-      try {
-        // Stop cron jobs
-        cronScheduler.stopAll();
-      } catch (err) {
-        Logger.debug('Error stopping cron:', err);
-      }
+      // try {
+      //   // Stop cron jobs
+      //   cronScheduler.stopAll();
+      // } catch (err) {
+      //   Logger.debug('Error stopping cron:', err);
+      // }
       
-      try {
-        // Close queue connections
-        await queueManager.close();
-      } catch (err) {
-        Logger.debug('Error closing queue:', err);
-      }
+      // try {
+      //   // Close queue connections
+      //   await queueManager.close();
+      // } catch (err) {
+      //   Logger.debug('Error closing queue:', err);
+      // }
       
       try {
         // Close Redis

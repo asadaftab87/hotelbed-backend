@@ -74,10 +74,67 @@ export class HotelBedFileController {
       const mode = (req.query.mode as "full" | "update") || "full";
       
       // Execute complete TURBO flow
-      const result = await HotelBedTurboRepo.executeFullFlow(mode);
+      const result = await HotelBedFileRepo.createFromZip(mode);
+      // const result = await HotelBedTurboRepo.executeFullFlow(mode);
       
       new SuccessResponse(
         "🚀 TURBO: Complete end-to-end flow finished successfully!",
+        result
+      ).send(res);
+    }
+  )
+
+  /**
+   * 🔄 Manual Precompute Endpoint
+   * Run this AFTER data is in database
+   * Calculates "From € p.p." prices for all hotels
+   */
+  runPrecompute = asyncHandler(
+    async (req: any, res: Response, next: NextFunction): Promise<Response | void> => {
+      const { precomputeService } = require('../../../services/precompute.service');
+      
+      // Run full precompute
+      const result = await precomputeService.runFullPrecompute();
+      
+      new SuccessResponse(
+        "✅ Precompute completed successfully!",
+        result
+      ).send(res);
+    }
+  )
+
+  /**
+   * 📊 Manual Search Index Update
+   * Run this AFTER precompute
+   * Updates SearchIndex table for fast queries
+   */
+  updateSearchIndex = asyncHandler(
+    async (req: any, res: Response, next: NextFunction): Promise<Response | void> => {
+      const { precomputeService } = require('../../../services/precompute.service');
+      
+      // Update search index
+      const updated = await precomputeService.updateSearchIndex();
+      
+      new SuccessResponse(
+        "✅ Search Index updated successfully!",
+        { hotelsUpdated: updated }
+      ).send(res);
+    }
+  )
+
+  /**
+   * 🏨 Process GENERAL Folder (HotelMaster & BoardMaster)
+   * Run this if HotelMaster is empty but CONTRACT data exists
+   */
+  processGeneralFolder = asyncHandler(
+    async (req: any, res: Response, next: NextFunction): Promise<Response | void> => {
+      const extractPath = req.query.path as string || 
+        path.join(__dirname, '../../../../downloads/hotelbeds_full_1760032801');
+      
+      const result = await HotelBedTurboRepo.processGeneralFolder(extractPath);
+      
+      new SuccessResponse(
+        "✅ GENERAL folder processed successfully!",
         result
       ).send(res);
     }

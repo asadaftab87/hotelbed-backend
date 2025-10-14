@@ -135,6 +135,44 @@ export default class HotelBedTurboRepo {
 
   /**
    * ═══════════════════════════════════════════════════════════════
+   * MANUAL: Process GENERAL Folder Only
+   * Use when HotelMaster is empty but CONTRACT data exists
+   * ═══════════════════════════════════════════════════════════════
+   */
+  static async processGeneralFolder(extractPath: string) {
+    Logger.info("🏨 Processing GENERAL folder manually...");
+    
+    try {
+      await this.step5_ProcessGeneralFiles(extractPath);
+      
+      // Count results
+      const [result] = await pool.execute<any[]>(
+        "SELECT COUNT(*) as count FROM HotelMaster"
+      );
+      const hotelCount = result[0]?.count || 0;
+      
+      const [boardResult] = await pool.execute<any[]>(
+        "SELECT COUNT(*) as count FROM BoardMaster"
+      );
+      const boardCount = boardResult[0]?.count || 0;
+      
+      Logger.info(`✅ GENERAL folder processed successfully!`);
+      Logger.info(`   HotelMaster: ${hotelCount} hotels`);
+      Logger.info(`   BoardMaster: ${boardCount} boards`);
+      
+      return {
+        success: true,
+        hotelMasterCount: hotelCount,
+        boardMasterCount: boardCount,
+      };
+    } catch (error: any) {
+      Logger.error("❌ Failed to process GENERAL folder:", error);
+      throw error;
+    }
+  }
+
+  /**
+   * ═══════════════════════════════════════════════════════════════
    * STEP 1: Clean Database
    * ═══════════════════════════════════════════════════════════════
    */
@@ -423,9 +461,14 @@ export default class HotelBedTurboRepo {
         ]);
 
         if (batch.length >= BATCH_SIZE) {
-          await this.bulkInsertHotelMaster(batch);
-          inserted += batch.length;
-          process.stdout.write(`\r   ⚡ Inserted: ${inserted.toLocaleString()} hotels  `);
+          try {
+            await this.bulkInsertHotelMaster(batch);
+            inserted += batch.length;
+            process.stdout.write(`\r   ⚡ Inserted: ${inserted.toLocaleString()} hotels  `);
+          } catch (error: any) {
+            Logger.error(`   ❌ Batch insert failed: ${error.message}`);
+            Logger.error(`   SQL: ${error.sql?.substring(0, 200)}`);
+          }
           batch = [];
         }
       }
@@ -433,8 +476,14 @@ export default class HotelBedTurboRepo {
 
     // Insert remaining
     if (batch.length > 0) {
-      await this.bulkInsertHotelMaster(batch);
-      inserted += batch.length;
+      try {
+        await this.bulkInsertHotelMaster(batch);
+        inserted += batch.length;
+      } catch (error: any) {
+        Logger.error(`   ❌ Final batch insert failed: ${error.message}`);
+        Logger.error(`   Error code: ${error.code}`);
+        Logger.error(`   SQL State: ${error.sqlState}`);
+      }
     }
 
     console.log(); // New line
@@ -496,8 +545,12 @@ export default class HotelBedTurboRepo {
         ]);
 
         if (batch.length >= BATCH_SIZE) {
-          await this.bulkInsertBoardMaster(batch);
-          inserted += batch.length;
+          try {
+            await this.bulkInsertBoardMaster(batch);
+            inserted += batch.length;
+          } catch (error: any) {
+            Logger.error(`   ❌ BoardMaster batch failed: ${error.message}`);
+          }
           batch = [];
         }
       }
@@ -505,8 +558,12 @@ export default class HotelBedTurboRepo {
 
     // Insert remaining
     if (batch.length > 0) {
-      await this.bulkInsertBoardMaster(batch);
-      inserted += batch.length;
+      try {
+        await this.bulkInsertBoardMaster(batch);
+        inserted += batch.length;
+      } catch (error: any) {
+        Logger.error(`   ❌ BoardMaster final batch failed: ${error.message}`);
+      }
     }
 
     Logger.info(`   ✅ BoardMaster: ${inserted.toLocaleString()} boards loaded`);

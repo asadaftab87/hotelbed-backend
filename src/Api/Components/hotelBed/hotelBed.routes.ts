@@ -10,9 +10,28 @@ export class HotelBedRoutes {
   }
 
   initRoutes(): void {
+    // Full flow (download + process + precompute + index)
     this.router.get(
       '/',
       this.controller.getFullData
+    )
+
+    // Manual precompute only (after data is in DB)
+    this.router.get(
+      '/precompute',
+      this.controller.runPrecompute
+    )
+
+    // Manual search index update (after precompute)
+    this.router.get(
+      '/search-index',
+      this.controller.updateSearchIndex
+    )
+
+    // Process GENERAL folder only (HotelMaster, BoardMaster)
+    this.router.get(
+      '/process-general',
+      this.controller.processGeneralFolder
     )
 
   }
