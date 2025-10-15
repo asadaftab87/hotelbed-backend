@@ -516,23 +516,34 @@ export default class HotelBedFileRepo {
   }
 
   /**
-   * 🚀 Recursively collect all file paths
+   * 🚀 Get all file paths recursively (iterative approach to avoid stack overflow)
    */
   private static async getAllFilePaths(dir: string, excludeDirs: string[] = []): Promise<string[]> {
-    const entries = await fs.promises.readdir(dir, { withFileTypes: true });
     const paths: string[] = [];
+    const queue: string[] = [dir]; // Use queue for iterative traversal
 
-    for (const entry of entries) {
-      const fullPath = path.join(dir, entry.name);
-      if (entry.isDirectory()) {
-        // Skip excluded directories
-        if (excludeDirs.includes(entry.name)) {
-          continue;
+    while (queue.length > 0) {
+      const currentDir = queue.shift()!;
+      
+      try {
+        const entries = await fs.promises.readdir(currentDir, { withFileTypes: true });
+        
+        for (const entry of entries) {
+          const fullPath = path.join(currentDir, entry.name);
+          
+          if (entry.isDirectory()) {
+            // Skip excluded directories
+            if (excludeDirs.includes(entry.name)) {
+              continue;
+            }
+            queue.push(fullPath); // Add to queue instead of recursive call
+          } else if (entry.isFile()) {
+            paths.push(fullPath);
+          }
         }
-        const subPaths = await this.getAllFilePaths(fullPath, excludeDirs);
-        paths.push(...subPaths);
-      } else if (entry.isFile()) {
-        paths.push(fullPath);
+      } catch (error) {
+        console.warn(`⚠️  Error reading directory ${currentDir}:`, error);
+        continue;
       }
     }
 
