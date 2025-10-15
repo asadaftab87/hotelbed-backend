@@ -13,6 +13,7 @@ const BASE_URL = "https://aif2.hotelbeds.com/aif2-pub-ws/files";
 const BATCH_SIZE = 2000;
 const CONCURRENCY = 5;
 
+
 // 🚀 OPTIMIZATION 5: Balanced connection pool to prevent MySQL packet errors
 const pool = mysql.createPool({
   host: "107.21.156.43",
