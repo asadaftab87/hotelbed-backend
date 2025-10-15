@@ -207,7 +207,7 @@ model MinMaxStay {
   sunFlag        Boolean?   // Sunday applicable
   
   createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  updatedAt DateTime @default(now()) @updatedAt
 }
 
 /// Supplements (CNSR) - Currently empty in data but defined in documentation
@@ -272,7 +272,7 @@ model CancellationFee {
   languageCode      String?   // field_11 - Language code (e.g., "EN")
   
   createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  updatedAt DateTime @default(now()) @updatedAt
 }
 
 /// Rate codes (CNTA)
@@ -434,7 +434,7 @@ model Role {
   isActive  Boolean  @default(true)
   isDeleted Boolean  @default(false)
   createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  updatedAt DateTime @default(now()) @updatedAt
 
   users User[]
 }
@@ -453,7 +453,7 @@ model User {
   role         Role         @relation(fields: [roleId], references: [id], onDelete: Restrict)
   isDeleted    Boolean      @default(false)
   createdAt    DateTime     @default(now())
-  updatedAt    DateTime     @updatedAt
+  updatedAt    DateTime     @default(now()) @updatedAt
   keystores    Keystore[]
   tokenstore   Tokenstore[]
 
@@ -465,7 +465,7 @@ model Keystore {
   secondaryKey String
   isActive     Boolean  @default(true)
   createdAt    DateTime @default(now())
-  updatedAt    DateTime @updatedAt
+  updatedAt    DateTime @default(now()) @updatedAt
 
   clientId String?
   client   User?   @relation(fields: [clientId], references: [id], onDelete: Cascade)
@@ -480,7 +480,7 @@ model Tokenstore {
   token     String    @unique
   shortCode String? // optional; can be used for OTP/short codes
   createdAt DateTime  @default(now())
-  updatedAt DateTime  @updatedAt
+  updatedAt DateTime  @default(now()) @updatedAt
   expireAt  DateTime
 
   userId String
