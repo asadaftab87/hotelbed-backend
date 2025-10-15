@@ -52,8 +52,9 @@ jobs:
             echo "-----------------------------"
             echo "🔄 Restarting app with PM2..."
             pm2 delete hotelbed-backend || true
-            pm2 start npm --name hotelbed-backend -- run serve
+            pm2 start ecosystem.config.js
             pm2 save
+            pm2 show hotelbed-backend | grep node_args
 
             echo "-----------------------------"
             echo "🎉 Deployment successful!"

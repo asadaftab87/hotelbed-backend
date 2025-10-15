@@ -20,7 +20,7 @@ const pool = mysql.createPool({
   password: "Asad124@",
   database: "hotelbed",
   waitForConnections: true,
-  connectionLimit: 75, // Balanced for 32GB RAM - good parallelism without OOM
+  connectionLimit: 100, // Maximum for r7a.xlarge - now safe with per-batch commits
   queueLimit: 0, // No queue limit
   enableKeepAlive: true,
   keepAliveInitialDelay: 0,
@@ -419,7 +419,7 @@ export default class HotelBedFileRepo {
 
     // 🚀 STREAMING APPROACH: Parse batches → Insert immediately → Clear memory
     // This prevents OOM by not holding all 154k files in memory at once!
-    const SUPER_BATCH = 10000; // Process 10k files at a time (aggressive but safe with 32GB RAM + 24GB heap)
+    const SUPER_BATCH = 20000; // Process 20k files at a time - ULTIMATE for 32GB RAM with proper heap
     const totalFiles = allFiles.length;
     let totalProcessed = 0;
     const globalInsertResults: Record<string, number> = {};
@@ -492,7 +492,7 @@ export default class HotelBedFileRepo {
       }
       
       // Insert section data for this batch
-      const INSERT_BATCH = 10000;
+      const INSERT_BATCH = 15000; // Increased for faster inserts with proper heap
       for (const [section, rows] of Object.entries(batchAggregated)) {
         const tableName = SECTION_TABLE_MAP[section];
         if (!tableName) continue;
@@ -508,14 +508,17 @@ export default class HotelBedFileRepo {
       
       totalProcessed += validParsedData.length;
       
+      // 💾 COMMIT after each batch so data is visible in database!
+      await pool.query('COMMIT');
+      await pool.query('START TRANSACTION'); // Start new transaction for next batch
+      
       // Log progress every batch (force output)
-      console.log(`📖 Processed ${totalProcessed}/${totalFiles} files... (${Math.round(totalProcessed/totalFiles*100)}%)`);
+      console.log(`📖 Processed ${totalProcessed}/${totalFiles} files... (${Math.round(totalProcessed/totalFiles*100)}%) - COMMITTED ✅`);
       spinner.text = `📖 Processed ${totalProcessed}/${totalFiles} files...`;
       
-      // Force GC after each super-batch + small delay for memory cleanup
+      // Force GC after each super-batch (no delay needed - async GC)
       if (global.gc) {
         global.gc();
-        await new Promise(resolve => setTimeout(resolve, 50)); // 50ms pause for GC
       }
     }
     
