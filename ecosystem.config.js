@@ -3,10 +3,11 @@ module.exports = {
     {
       name: "hotelbed-backend",
       script: "dist/src/app.js",
-      // 🚀 OPTIMIZED for r7a.xlarge (4 vCPUs, 32GB RAM)
+      // 🚀 BALANCED for r7a.xlarge (32GB RAM)
       node_args: [
-        "--max-old-space-size=28672",     // 28GB heap (leave 4GB for system)
-        "--max-semi-space-size=128",      // Faster garbage collection
+        "--max-old-space-size=24576",     // 24GB heap (balanced - leaves 8GB for OS)
+        "--expose-gc",                    // Allow manual GC calls
+        "--max-semi-space-size=64",       // Balanced GC
         "--optimize-for-size",            // Better memory efficiency
       ].join(" "),
       env: {

@@ -13,14 +13,14 @@ const BASE_URL = "https://aif2.hotelbeds.com/aif2-pub-ws/files";
 const BATCH_SIZE = 2000;
 const CONCURRENCY = 5;
 
-// 🚀 OPTIMIZATION 5: Increased connection pool for parallel processing
+// 🚀 OPTIMIZATION 5: Optimized connection pool for r7a.xlarge
 const pool = mysql.createPool({
   host: "107.21.156.43",
   user: "asadaftab",
   password: "Asad124@",
   database: "hotelbed",
   waitForConnections: true,
-  connectionLimit: 100, // Increased from 20 → 100 for MAXIMUM parallel inserts
+  connectionLimit: 75, // Balanced for 32GB RAM - good parallelism without OOM
   queueLimit: 0, // No queue limit
   enableKeepAlive: true,
   keepAliveInitialDelay: 0,
@@ -427,9 +427,9 @@ export default class HotelBedFileRepo {
       sections: Record<string, any[]>;
     }> = [];
 
-    // 🚀 OPTIMIZATION 1: Optimized for r7a.xlarge (32GB RAM)
-    // 10k files in parallel = Perfect for 32GB RAM!
-    const PARSE_CHUNK = 10000;
+    // 🚀 OPTIMIZATION 1: Balanced for r7a.xlarge (32GB RAM)
+    // 5k files = Good performance + Memory stability
+    const PARSE_CHUNK = 5000;
     for (let i = 0; i < allFiles.length; i += PARSE_CHUNK) {
       const chunk = allFiles.slice(i, i + PARSE_CHUNK);
       const chunkResults = await Promise.all(
@@ -450,6 +450,14 @@ export default class HotelBedFileRepo {
       
       allParsedData.push(...chunkResults.filter(Boolean) as any);
       spinner.text = `📖 Parsed ${Math.min(i + PARSE_CHUNK, allFiles.length)}/${allFiles.length} files...`;
+      
+      // 🧹 CRITICAL: Force garbage collection between chunks to free memory
+      if (global.gc) {
+        global.gc();
+      }
+      
+      // Small delay to allow GC to complete
+      await new Promise(resolve => setTimeout(resolve, 100));
     }
 
     const parseTime = ((Date.now() - parseStart) / 1000).toFixed(1);
@@ -502,18 +510,17 @@ export default class HotelBedFileRepo {
     spinner.start('💾 Bulk inserting all data...');
     const insertResults: Record<string, number> = {};
     
-    // 🚀 OPTIMIZATION 2: Increase batch size (5000 → 15000)
-    // Larger batches = Fewer queries = FASTER!
-    const INSERT_BATCH = 15000;
+    // 🚀 OPTIMIZATION 2: Balanced batch size for performance + stability
+    const INSERT_BATCH = 10000;
     
     // 🚀 OPTIMIZATION 3: Disable foreign key checks for speed
     await pool.query('SET foreign_key_checks = 0');
     await pool.query('SET unique_checks = 0');
     await pool.query('SET autocommit = 0');
     
-    // 🚀 OPTIMIZATION 6: PARALLEL section inserts (different tables = safe!)
+    // 🚀 OPTIMIZATION 6: Balanced parallel inserts
     const sectionEntries = Object.entries(aggregatedData);
-    const PARALLEL_TABLES = 3; // Insert 3 tables at a time in parallel
+    const PARALLEL_TABLES = 2; // 2 tables in parallel = Safe + Fast
     
     for (let t = 0; t < sectionEntries.length; t += PARALLEL_TABLES) {
       const parallelBatch = sectionEntries.slice(t, t + PARALLEL_TABLES);
