@@ -13,14 +13,14 @@ const BASE_URL = "https://aif2.hotelbeds.com/aif2-pub-ws/files";
 const BATCH_SIZE = 2000;
 const CONCURRENCY = 5;
 
-// 🚀 OPTIMIZATION 5: Optimized connection pool for r7a.xlarge
+// 🚀 OPTIMIZATION 5: Balanced connection pool to prevent MySQL packet errors
 const pool = mysql.createPool({
   host: "107.21.156.43",
   user: "asadaftab",
   password: "Asad124@",
   database: "hotelbed",
   waitForConnections: true,
-  connectionLimit: 150, // ABSOLUTE MAXIMUM - 30k batch needs more connections
+  connectionLimit: 20, // Reduced to prevent "packets out of order" errors
   queueLimit: 0, // No queue limit
   enableKeepAlive: true,
   keepAliveInitialDelay: 0,
@@ -29,6 +29,7 @@ const pool = mysql.createPool({
   dateStrings: true,
   supportBigNumbers: true,
   bigNumberStrings: true,
+  connectTimeout: 60000, // 60 second timeout
 });
 
 const SECTION_TABLE_MAP: Record<string, string> = {
@@ -218,7 +219,9 @@ export default class HotelBedFileRepo {
         // ⚡ SPECIAL HANDLING for CNCT (Cost) section - Parse tuples!
         if (currentSection === "CNCT") {
           const parsedRows = this.parseCNCTLine(line);
-          currentArray.push(...parsedRows);
+          if (parsedRows.length > 0) {
+            currentArray.push(...parsedRows);
+          }
         } else {
           const parts = line.split(":");
           const row: Record<string, string> = {};
@@ -285,6 +288,11 @@ export default class HotelBedFileRepo {
         field_12: "",  // validFrom (not in tuple)
         field_13: ""   // validTo (not in tuple)
       });
+    }
+    
+    // Debug log
+    if (rows.length > 0) {
+      console.log(`🔍 CNCT parsed: ${rows.length} cost records from tuples`);
     }
     
     return rows;
@@ -417,9 +425,9 @@ export default class HotelBedFileRepo {
     const allFiles = await this.getAllFilePaths(dir, ['GENERAL']);
     spinner.succeed(`✅ Found ${allFiles.length} CONTRACT files to process`);
 
-    // 🚀 STREAMING APPROACH: Parse batches → Insert immediately → Clear memory
+    // 🚀 STREAMING APPROACH: Parse batches → Insert immediately → Clear memory  
     // This prevents OOM by not holding all 154k files in memory at once!
-    const SUPER_BATCH = 30000; // Process 30k files at a time - ABSOLUTE MAXIMUM for 32GB RAM
+    const SUPER_BATCH = 30000; // MAXIMUM for 32GB RAM - other tables working fine!
     const totalFiles = allFiles.length;
     let totalProcessed = 0;
     const globalInsertResults: Record<string, number> = {};
@@ -492,18 +500,40 @@ export default class HotelBedFileRepo {
       }
       
       // Insert section data for this batch
-      const INSERT_BATCH = 20000; // MAXIMUM batch size for fastest inserts
+      const INSERT_BATCH = 10000; // Balanced batch size
+      
+      console.log(`📊 Batch has ${Object.keys(batchAggregated).length} sections: ${Object.keys(batchAggregated).join(', ')}`);
+      
       for (const [section, rows] of Object.entries(batchAggregated)) {
         const tableName = SECTION_TABLE_MAP[section];
-        if (!tableName) continue;
-        
-        for (let i = 0; i < rows.length; i += INSERT_BATCH) {
-          const chunk = rows.slice(i, i + INSERT_BATCH);
-          await bulkInsertRaw(tableName, chunk, pool, { onDuplicate: mode === "update" });
+        if (!tableName) {
+          console.warn(`⚠️  No table mapping for section: ${section}`);
+          continue;
         }
         
-        // Track totals
-        globalInsertResults[tableName] = (globalInsertResults[tableName] || 0) + rows.length;
+        if (rows.length === 0) {
+          console.log(`   ⚠️  ${section} section empty, skipping...`);
+          continue;
+        }
+        
+        console.log(`   📝 Processing ${section} → ${tableName}: ${rows.length} records`);
+        
+        try {
+          for (let i = 0; i < rows.length; i += INSERT_BATCH) {
+            const chunk = rows.slice(i, i + INSERT_BATCH);
+            await bulkInsertRaw(tableName, chunk, pool, { onDuplicate: mode === "update" });
+          }
+          
+          // Track totals
+          globalInsertResults[tableName] = (globalInsertResults[tableName] || 0) + rows.length;
+          console.log(`   ✅ ${tableName}: ${rows.length} records inserted successfully`);
+        } catch (error: any) {
+          console.error(`❌ ERROR inserting into ${tableName}:`, error.message);
+          console.error(`   Section: ${section}, Rows: ${rows.length}`);
+          if (rows.length > 0) {
+            console.error(`   Sample row:`, JSON.stringify(rows[0]).substring(0, 200));
+          }
+        }
       }
       
       totalProcessed += validParsedData.length;
@@ -532,6 +562,17 @@ export default class HotelBedFileRepo {
     await pool.query('SET unique_checks = 1');
     await pool.query('SET autocommit = 1');
     spinner.succeed(`✅ All data committed!`);
+
+    // 🏗️ Build Inventory table from Restriction + other tables
+    spinner.start('🏗️ Building Inventory table...');
+    console.log('\n🏗️ Building Inventory table from Restriction, StopSale, MinMaxStay, and Contract data...');
+    try {
+      await this.buildInventoryFromDatabase();
+      spinner.succeed('✅ Inventory table built successfully!');
+    } catch (error: any) {
+      console.error('❌ Error building Inventory:', error.message);
+      spinner.fail('❌ Inventory build failed');
+    }
 
     console.log('\n📊 SUMMARY:');
     console.log(`   Files processed: ${totalProcessed}`);
@@ -808,5 +849,132 @@ export default class HotelBedFileRepo {
       const chunk = inventoryRows.slice(i, i + INV_BATCH);
       await bulkInsertRaw("Inventory", chunk, pool, { onDuplicate: true });
     }
+  }
+
+  /**
+   * 🏗️ Build Inventory table from database tables (Restriction, StopSale, MinMaxStay, Contract)
+   * Uses data already in database instead of in-memory aggregation
+   */
+  private static async buildInventoryFromDatabase() {
+    console.log('📊 Fetching data from Restriction, StopSale, MinMaxStay, and Contract tables...');
+    
+    // Fetch all required data
+    const [restrictions, stopSales, minMaxStays, contracts] = await Promise.all([
+      pool.query('SELECT * FROM Restriction'),
+      pool.query('SELECT * FROM StopSale'),  
+      pool.query('SELECT * FROM MinMaxStay'),
+      pool.query('SELECT hotelBedId, hotelCode FROM Contract')
+    ]);
+
+    const restrictionData = (restrictions[0] as any[]);
+    const stopSaleData = (stopSales[0] as any[]);
+    const minMaxData = (minMaxStays[0] as any[]);
+    const contractData = (contracts[0] as any[]);
+
+    console.log(`   Restriction records: ${restrictionData.length}`);
+    console.log(`   StopSale records: ${stopSaleData.length}`);
+    console.log(`   MinMaxStay records: ${minMaxData.length}`);
+    console.log(`   Contract records: ${contractData.length}`);
+
+    // Build lookup maps
+    const hotelCodeMap = new Map<string, string>();
+    contractData.forEach((c: any) => {
+      hotelCodeMap.set(c.hotelBedId, c.hotelCode);
+    });
+
+    const stopSaleMap = new Map<string, boolean>();
+    stopSaleData.forEach((ss: any) => {
+      const key = `${ss.hotelBedId}|${ss.roomCode}|${ss.characteristic}`;
+      stopSaleMap.set(key, ss.stopSalesFlag === 1 || ss.stopSalesFlag === true);
+    });
+
+    const minMaxMap = new Map<string, { minNights?: number; maxNights?: number }>();
+    minMaxData.forEach((mm: any) => {
+      const key = `${mm.hotelBedId}|${mm.roomCode}|${mm.characteristic}`;
+      minMaxMap.set(key, {
+        minNights: mm.minNights,
+        maxNights: mm.maxNights
+      });
+    });
+
+    // Build inventory rows
+    console.log('🔨 Building inventory rows...');
+    const inventoryRows: any[] = [];
+
+    for (const restriction of restrictionData) {
+      const hotelCode = hotelCodeMap.get(restriction.hotelBedId) || null;
+      const lookupKey = `${restriction.hotelBedId}|${restriction.roomCode}|${restriction.characteristic}`;
+      const stopSale = stopSaleMap.get(lookupKey) || false;
+      const minMax = minMaxMap.get(lookupKey) || {};
+
+      // Parse inventory tuples if present
+      const tuples = restriction.inventoryTuples || "";
+      const tupleRegex = /\((\d+),(\d+)\)/g;
+      const matches = [...tuples.matchAll(tupleRegex)];
+
+      if (matches.length > 0) {
+        // Create inventory record for each tuple (daily breakdown)
+        let currentDate = restriction.startDate ? new Date(restriction.startDate) : null;
+        
+        matches.forEach((match) => {
+          const releaseDays = parseInt(match[1]) || null;
+          const allotment = parseInt(match[2]) || null;
+
+          if (currentDate) {
+            inventoryRows.push({
+              id: randomUUID(),
+              hotelBedId: restriction.hotelBedId,
+              calendarDate: currentDate.toISOString().slice(0, 19).replace('T', ' '),
+              hotelCode: hotelCode,
+              roomCode: restriction.roomCode,
+              characteristic: restriction.characteristic,
+              ratePlanId: restriction.rateCode || null,
+              allotment: allotment,
+              stopSale: stopSale,
+              releaseDays: releaseDays,
+              cta: releaseDays,
+              ctd: 0,
+              minNights: minMax.minNights || null,
+              maxNights: minMax.maxNights || null,
+              createdAt: new Date().toISOString().slice(0, 19).replace('T', ' ')
+            });
+
+            // Move to next day
+            currentDate.setDate(currentDate.getDate() + 1);
+          }
+        });
+      } else {
+        // No tuples - create single record
+        inventoryRows.push({
+          id: randomUUID(),
+          hotelBedId: restriction.hotelBedId,
+          calendarDate: restriction.startDate ? new Date(restriction.startDate).toISOString().slice(0, 19).replace('T', ' ') : null,
+          hotelCode: hotelCode,
+          roomCode: restriction.roomCode,
+          characteristic: restriction.characteristic,
+          ratePlanId: restriction.rateCode || null,
+          allotment: restriction.allotment || null,
+          stopSale: stopSale,
+          releaseDays: restriction.releaseDays || null,
+          cta: restriction.releaseDays || null,
+          ctd: 0,
+          minNights: minMax.minNights || null,
+          maxNights: minMax.maxNights || null,
+          createdAt: new Date().toISOString().slice(0, 19).replace('T', ' ')
+        });
+      }
+    }
+
+    console.log(`   📦 Total inventory rows to insert: ${inventoryRows.length}`);
+
+    // Bulk insert inventory
+    const INV_BATCH = 5000;
+    for (let i = 0; i < inventoryRows.length; i += INV_BATCH) {
+      const chunk = inventoryRows.slice(i, i + INV_BATCH);
+      await bulkInsertRaw("Inventory", chunk, pool, { onDuplicate: true });
+      console.log(`   ⚡ Inserted ${Math.min(i + INV_BATCH, inventoryRows.length)}/${inventoryRows.length} inventory records`);
+    }
+
+    console.log(`✅ Inventory table built with ${inventoryRows.length} records!`);
   }
 }
