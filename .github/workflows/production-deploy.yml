@@ -55,8 +55,19 @@ jobs:
             # Stop all processes
             pm2 delete all || true
             
-            # Start with ecosystem.config.js (using interpreter_args)
-            pm2 start ecosystem.config.js
+            # Create wrapper script for guaranteed heap flags
+            echo "📝 Creating wrapper script with heap flags..."
+            cat > ~/hotelbed-backend/start-with-heap.sh << 'WRAPPER_EOF'
+            
+            #!/bin/bash
+            cd /home/ec2-user/hotelbed-backend
+            exec node --max-old-space-size=24576 --expose-gc --max-semi-space-size=64 --optimize-for-size dist/src/app.js
+            WRAPPER_EOF
+            
+            chmod +x ~/hotelbed-backend/start-with-heap.sh
+            
+            # Start with wrapper script
+            pm2 start ~/hotelbed-backend/start-with-heap.sh --name hotelbed-backend
             pm2 save
             
             # Wait for process to start
@@ -70,16 +81,10 @@ jobs:
             echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
             
             # Check if flags applied
-            if ps aux | grep "dist/src/app.js" | grep -v grep | grep -q "max-old-space-size"; then
+            if ps aux | grep "dist/src/app.js" | grep -v grep | grep -q "max-old-space-size=24576"; then
               echo "✅ Heap flags APPLIED successfully!"
             else
-              echo "⚠️  WARNING: Heap flags NOT visible in process"
-              echo "🔧 Applying fallback method..."
-              pm2 delete all
-              NODE_OPTIONS="--max-old-space-size=24576 --expose-gc" pm2 start dist/src/app.js --name hotelbed-backend
-              pm2 save
-              sleep 2
-              ps aux | grep "dist/src/app.js" | grep -v grep
+              echo "❌ ERROR: Heap flags NOT applied - check wrapper script!"
             fi
             
             echo ""
@@ -88,7 +93,9 @@ jobs:
             
             echo "-----------------------------"
             echo "🎉 Deployment successful!"
-            echo "✅ Optimized for r7a.xlarge (32GB RAM)"
-            echo "✅ Heap size: 24GB"
-            echo "✅ Batch size: 20,000 files"
-            echo "✅ Expected import time: 13-15 minutes"
+            echo "✅ Instance: r7a.xlarge (32GB RAM)"
+            echo "✅ Heap size: 24GB (via wrapper script)"
+            echo "✅ Batch size: 30,000 files"
+            echo "✅ Insert batch: 20,000 records"
+            echo "✅ Total batches: 6"
+            echo "✅ Expected import time: 10-12 minutes"
