@@ -417,23 +417,27 @@ export default class HotelBedFileRepo {
     const allFiles = await this.getAllFilePaths(dir, ['GENERAL']);
     spinner.succeed(`✅ Found ${allFiles.length} CONTRACT files to process`);
 
-    // 🚀 STEP 2: Parse ALL files in parallel
-    spinner.start('📖 Parsing all files in parallel...');
-    const parseStart = Date.now();
+    // 🚀 STREAMING APPROACH: Parse small batches → Insert immediately → Clear memory
+    // This prevents OOM by not holding all 154k files in memory at once!
+    const SUPER_BATCH = 1000; // Process 1000 files at a time, then insert
+    const totalFiles = allFiles.length;
+    let totalProcessed = 0;
+    const globalInsertResults: Record<string, number> = {};
     
-    const allParsedData: Array<{
-      fileId: string;
-      fileName: string;
-      sections: Record<string, any[]>;
-    }> = [];
-
-    // 🚀 OPTIMIZATION 1: Balanced for r7a.xlarge (32GB RAM)
-    // 5k files = Good performance + Memory stability
-    const PARSE_CHUNK = 5000;
-    for (let i = 0; i < allFiles.length; i += PARSE_CHUNK) {
-      const chunk = allFiles.slice(i, i + PARSE_CHUNK);
-      const chunkResults = await Promise.all(
-        chunk.map(async (filePath) => {
+    // Disable DB checks once at start
+    await pool.query('SET foreign_key_checks = 0');
+    await pool.query('SET unique_checks = 0');
+    await pool.query('SET autocommit = 0');
+    
+    spinner.start(`📖 Processing ${totalFiles} files in batches of ${SUPER_BATCH}...`);
+    const processStart = Date.now();
+    
+    for (let superIdx = 0; superIdx < totalFiles; superIdx += SUPER_BATCH) {
+      const superBatch = allFiles.slice(superIdx, superIdx + SUPER_BATCH);
+      
+      // Parse this super-batch
+      const parsedData = await Promise.all(
+        superBatch.map(async (filePath) => {
           try {
             const sections = await this.parseFileToJson(filePath);
             return {
@@ -448,123 +452,81 @@ export default class HotelBedFileRepo {
         })
       );
       
-      allParsedData.push(...chunkResults.filter(Boolean) as any);
-      spinner.text = `📖 Parsed ${Math.min(i + PARSE_CHUNK, allFiles.length)}/${allFiles.length} files...`;
+      const validParsedData = parsedData.filter(Boolean) as any[];
       
-      // 🧹 CRITICAL: Force garbage collection between chunks to free memory
+      // Aggregate this super-batch
+      const batchAggregated: Record<string, any[]> = {};
+      const fileRecords: any[] = [];
+      
+      validParsedData.forEach(({ fileId, fileName, sections }: any) => {
+        // File record
+        fileRecords.push({
+          id: fileId,
+          name: fileName,
+          createdAt: new Date().toISOString().slice(0, 19).replace('T', ' ')
+        });
+        
+        // Aggregate sections
+        for (const [section, rows] of Object.entries(sections as Record<string, any[]>)) {
+          if (!rows || rows.length === 0) continue;
+          
+          if (!batchAggregated[section]) {
+            batchAggregated[section] = [];
+          }
+          
+          const mappedRows = mapRow(section, rows).map((r: any) => ({
+            id: randomUUID(),
+            hotelBedId: fileId,
+            ...r,
+          }));
+          
+          batchAggregated[section].push(...mappedRows);
+        }
+      });
+      
+      // Insert file records for this batch
+      if (fileRecords.length > 0) {
+        await bulkInsertRaw("HotelBedFile", fileRecords, pool, { onDuplicate: true });
+      }
+      
+      // Insert section data for this batch
+      const INSERT_BATCH = 10000;
+      for (const [section, rows] of Object.entries(batchAggregated)) {
+        const tableName = SECTION_TABLE_MAP[section];
+        if (!tableName) continue;
+        
+        for (let i = 0; i < rows.length; i += INSERT_BATCH) {
+          const chunk = rows.slice(i, i + INSERT_BATCH);
+          await bulkInsertRaw(tableName, chunk, pool, { onDuplicate: mode === "update" });
+        }
+        
+        // Track totals
+        globalInsertResults[tableName] = (globalInsertResults[tableName] || 0) + rows.length;
+      }
+      
+      totalProcessed += validParsedData.length;
+      spinner.text = `📖 Processed ${totalProcessed}/${totalFiles} files...`;
+      
+      // Force GC after each super-batch
       if (global.gc) {
         global.gc();
       }
-      
-      // Small delay to allow GC to complete
-      await new Promise(resolve => setTimeout(resolve, 100));
-    }
-
-    const parseTime = ((Date.now() - parseStart) / 1000).toFixed(1);
-    spinner.succeed(`✅ Parsed ${allParsedData.length} files in ${parseTime}s`);
-
-    // 🚀 STEP 3: Aggregate data by section
-    spinner.start('🔄 Aggregating data by section...');
-    const aggregatedData: Record<string, any[]> = {};
-    const fileIdMap = new Map<string, string>();
-    
-    allParsedData.forEach(({ fileId, fileName, sections }) => {
-      fileIdMap.set(fileName, fileId);
-      
-      for (const [section, rows] of Object.entries(sections)) {
-        if (!rows || rows.length === 0) continue;
-        
-        if (!aggregatedData[section]) {
-          aggregatedData[section] = [];
-        }
-        
-        const mappedRows = mapRow(section, rows).map(r => ({
-          id: randomUUID(),
-          hotelBedId: fileId,
-          ...r,
-        }));
-        
-        aggregatedData[section].push(...mappedRows);
-      }
-    });
-
-    const totalRecords = Object.values(aggregatedData).reduce((sum, arr) => sum + arr.length, 0);
-    spinner.succeed(`✅ Aggregated ${totalRecords} records across ${Object.keys(aggregatedData).length} sections`);
-
-    // 🚀 STEP 4: Insert HotelBedFile records
-    spinner.start('💾 Inserting file records...');
-    const fileRecords = Array.from(fileIdMap.entries()).map(([fileName, fileId]) => ({
-      id: fileId,
-      name: fileName,
-      createdAt: new Date().toISOString().slice(0, 19).replace('T', ' ')
-    }));
-    
-    const FILE_BATCH = 5000;
-    for (let i = 0; i < fileRecords.length; i += FILE_BATCH) {
-      const chunk = fileRecords.slice(i, i + FILE_BATCH);
-      await bulkInsertRaw("HotelBedFile", chunk, pool, { onDuplicate: true });
-    }
-    spinner.succeed(`✅ Inserted ${fileRecords.length} file records`);
-
-    // 🚀 STEP 5: Bulk insert all sections
-    spinner.start('💾 Bulk inserting all data...');
-    const insertResults: Record<string, number> = {};
-    
-    // 🚀 OPTIMIZATION 2: Balanced batch size for performance + stability
-    const INSERT_BATCH = 10000;
-    
-    // 🚀 OPTIMIZATION 3: Disable foreign key checks for speed
-    await pool.query('SET foreign_key_checks = 0');
-    await pool.query('SET unique_checks = 0');
-    await pool.query('SET autocommit = 0');
-    
-    // 🚀 OPTIMIZATION 6: Balanced parallel inserts
-    const sectionEntries = Object.entries(aggregatedData);
-    const PARALLEL_TABLES = 2; // 2 tables in parallel = Safe + Fast
-    
-    for (let t = 0; t < sectionEntries.length; t += PARALLEL_TABLES) {
-      const parallelBatch = sectionEntries.slice(t, t + PARALLEL_TABLES);
-      
-      await Promise.all(
-        parallelBatch.map(async ([section, rows]) => {
-          const tableName = SECTION_TABLE_MAP[section];
-          if (!tableName) {
-            console.warn(`⚠️  No table mapping for section ${section}`);
-            return;
-          }
-
-          spinner.text = `💾 Inserting ${rows.length} records into ${tableName}...`;
-          
-          for (let i = 0; i < rows.length; i += INSERT_BATCH) {
-            const chunk = rows.slice(i, i + INSERT_BATCH);
-            await bulkInsertRaw(tableName, chunk, pool, { onDuplicate: mode === "update" });
-          }
-          
-          insertResults[tableName] = rows.length;
-          spinner.succeed(`✅ ${tableName}: ${rows.length} records`);
-        })
-      );
     }
     
-    // 🚀 Re-enable checks and commit
+    const processTime = ((Date.now() - processStart) / 1000).toFixed(1);
+    spinner.succeed(`✅ Processed ${totalProcessed} files in ${processTime}s`);
+    
+    // Re-enable checks and commit
+    spinner.start('💾 Committing transaction...');
     await pool.query('COMMIT');
     await pool.query('SET foreign_key_checks = 1');
     await pool.query('SET unique_checks = 1');
     await pool.query('SET autocommit = 1');
-
-    spinner.succeed(`✅ All data inserted!`);
-
-    // 🚀 STEP 6: Build Inventory table
-    if (aggregatedData.CNIN && aggregatedData.CNIN.length > 0) {
-      spinner.start('🏗️ Building Inventory table...');
-      await this.buildInventoryTableUltra(allParsedData);
-      spinner.succeed('✅ Inventory table built');
-    }
+    spinner.succeed(`✅ All data committed!`);
 
     console.log('\n📊 SUMMARY:');
-    console.log(`   Files processed: ${allParsedData.length}`);
-    console.log(`   Total records: ${totalRecords}`);
-    Object.entries(insertResults).forEach(([table, count]) => {
+    console.log(`   Files processed: ${totalProcessed}`);
+    Object.entries(globalInsertResults).forEach(([table, count]) => {
       console.log(`   ${table}: ${count} records`);
     });
   }
