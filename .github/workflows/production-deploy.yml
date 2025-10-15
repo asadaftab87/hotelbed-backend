@@ -52,7 +52,7 @@ jobs:
             echo "-----------------------------"
             echo "🔄 Restarting app with PM2..."
             pm2 delete hotelbed-backend || true
-            pm2 start ecosystem.config.js
+            pm2 start npm --name hotelbed-backend -- run serve
             pm2 save
 
             echo "-----------------------------"
