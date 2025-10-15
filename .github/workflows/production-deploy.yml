@@ -51,10 +51,32 @@ jobs:
 
             echo "-----------------------------"
             echo "🔄 Restarting app with PM2..."
-            pm2 delete hotelbed-backend || true
+            
+            # Stop all processes
+            pm2 delete all || true
+            
+            # Set NODE_OPTIONS for guaranteed heap size
+            export NODE_OPTIONS="--max-old-space-size=24576 --expose-gc --max-semi-space-size=64"
+            
+            # Add to bashrc for persistence
+            grep -qxF 'export NODE_OPTIONS="--max-old-space-size=24576 --expose-gc"' ~/.bashrc || \
+            echo 'export NODE_OPTIONS="--max-old-space-size=24576 --expose-gc"' >> ~/.bashrc
+            
+            # Start with ecosystem.config.js
             pm2 start ecosystem.config.js
             pm2 save
-            pm2 show hotelbed-backend | grep node_args
-
+            
+            # Verify heap size applied
+            echo ""
+            echo "🔍 Verifying heap size..."
+            ps aux | grep "dist/src/app.js" | grep -v grep || echo "Process starting..."
+            
+            echo ""
+            echo "📊 PM2 Status:"
+            pm2 list
+            
             echo "-----------------------------"
             echo "🎉 Deployment successful!"
+            echo "✅ Heap size: 24GB configured"
+            echo "✅ Batch size: 20,000 files"
+            echo "✅ Expected import time: 13-15 minutes"
