@@ -419,7 +419,7 @@ export default class HotelBedFileRepo {
 
     // 🚀 STREAMING APPROACH: Parse batches → Insert immediately → Clear memory
     // This prevents OOM by not holding all 154k files in memory at once!
-    const SUPER_BATCH = 5000; // Process 5000 files at a time (optimized for 32GB RAM)
+    const SUPER_BATCH = 10000; // Process 10k files at a time (aggressive but safe with 32GB RAM + 24GB heap)
     const totalFiles = allFiles.length;
     let totalProcessed = 0;
     const globalInsertResults: Record<string, number> = {};
@@ -512,9 +512,10 @@ export default class HotelBedFileRepo {
       console.log(`📖 Processed ${totalProcessed}/${totalFiles} files... (${Math.round(totalProcessed/totalFiles*100)}%)`);
       spinner.text = `📖 Processed ${totalProcessed}/${totalFiles} files...`;
       
-      // Force GC after each super-batch
+      // Force GC after each super-batch + small delay for memory cleanup
       if (global.gc) {
         global.gc();
+        await new Promise(resolve => setTimeout(resolve, 50)); // 50ms pause for GC
       }
     }
     
