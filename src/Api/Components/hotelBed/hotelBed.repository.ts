@@ -417,9 +417,9 @@ export default class HotelBedFileRepo {
     const allFiles = await this.getAllFilePaths(dir, ['GENERAL']);
     spinner.succeed(`✅ Found ${allFiles.length} CONTRACT files to process`);
 
-    // 🚀 STREAMING APPROACH: Parse small batches → Insert immediately → Clear memory
+    // 🚀 STREAMING APPROACH: Parse batches → Insert immediately → Clear memory
     // This prevents OOM by not holding all 154k files in memory at once!
-    const SUPER_BATCH = 1000; // Process 1000 files at a time, then insert
+    const SUPER_BATCH = 5000; // Process 5000 files at a time (optimized for 32GB RAM)
     const totalFiles = allFiles.length;
     let totalProcessed = 0;
     const globalInsertResults: Record<string, number> = {};
@@ -429,10 +429,12 @@ export default class HotelBedFileRepo {
     await pool.query('SET unique_checks = 0');
     await pool.query('SET autocommit = 0');
     
+    console.log(`\n🚀 Starting streaming process: ${totalFiles} files in batches of ${SUPER_BATCH}...`);
     spinner.start(`📖 Processing ${totalFiles} files in batches of ${SUPER_BATCH}...`);
     const processStart = Date.now();
     
     for (let superIdx = 0; superIdx < totalFiles; superIdx += SUPER_BATCH) {
+      console.log(`\n🔄 Batch ${Math.floor(superIdx/SUPER_BATCH) + 1}/${Math.ceil(totalFiles/SUPER_BATCH)} starting...`);
       const superBatch = allFiles.slice(superIdx, superIdx + SUPER_BATCH);
       
       // Parse this super-batch
@@ -505,6 +507,9 @@ export default class HotelBedFileRepo {
       }
       
       totalProcessed += validParsedData.length;
+      
+      // Log progress every batch (force output)
+      console.log(`📖 Processed ${totalProcessed}/${totalFiles} files... (${Math.round(totalProcessed/totalFiles*100)}%)`);
       spinner.text = `📖 Processed ${totalProcessed}/${totalFiles} files...`;
       
       // Force GC after each super-batch
