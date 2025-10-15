@@ -476,13 +476,10 @@ export default class HotelBedFileRepo {
             batchAggregated[section] = [];
           }
           
-          const now = new Date().toISOString().slice(0, 19).replace('T', ' ');
           const mappedRows = mapRow(section, rows).map((r: any) => ({
             id: randomUUID(),
             hotelBedId: fileId,
             ...r,
-            createdAt: now,
-            updatedAt: now,
           }));
           
           batchAggregated[section].push(...mappedRows);
