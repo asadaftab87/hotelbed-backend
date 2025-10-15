@@ -6,7 +6,7 @@ PORT=5000
 API_VERSION=v1
 
 # Database
-DB_URI=mysql://asadaftab:Asad124@@54.85.142.212:3306/hotelbed
+DB_URI=mysql://asadaftab:Asad124@@107.21.156.43:3306/hotelbed
 
 # ========================================
 # REDIS CONFIGURATION (LOCAL)

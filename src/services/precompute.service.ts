@@ -39,7 +39,7 @@ export class PrecomputeService {
     
     // Create MySQL connection pool for raw queries (FAST!)
     this.pool = mysql.createPool({
-      host: process.env.DB_HOST || '54.85.142.212',
+      host: process.env.DB_HOST || '107.21.156.43',
       user: process.env.DB_USER || 'asadaftab',
       password: process.env.DB_PASSWORD || 'Asad124@',
       database: process.env.DB_NAME || 'hotelbed',

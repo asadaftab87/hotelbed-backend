@@ -15,7 +15,7 @@ const CONCURRENCY = 5;
 
 // 🚀 OPTIMIZATION 5: Increased connection pool for parallel processing
 const pool = mysql.createPool({
-  host: "54.85.142.212",
+  host: "107.21.156.43",
   user: "asadaftab",
   password: "Asad124@",
   database: "hotelbed",

@@ -3,7 +3,7 @@ const mysql = require('mysql2/promise');
 
 async function insertTestData() {
   const connection = await mysql.createConnection({
-    host: '54.85.142.212',
+    host: '107.21.156.43',
     user: 'asadaftab',
     password: 'Asad124@',
     database: 'hotelbed',
