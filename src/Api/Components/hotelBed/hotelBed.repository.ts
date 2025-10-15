@@ -33,6 +33,7 @@ const pool = mysql.createPool({
   connectTimeout: 60000, // 60 second timeout
 });
 
+
 const SECTION_TABLE_MAP: Record<string, string> = {
   HOTEL: "HotelMaster",
   BOARD: "BoardMaster",
