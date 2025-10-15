@@ -427,9 +427,8 @@ export default class HotelBedFileRepo {
       sections: Record<string, any[]>;
     }> = [];
 
-    // 🚀 OPTIMIZATION 1: Increase parallelism (1000 → 10000)
-    // More files processed in parallel = FASTER!
-    // c7a.xlarge has 4 vCPUs - can handle 10k parallel promises
+    // 🚀 OPTIMIZATION 1: Optimized for r7a.xlarge (32GB RAM)
+    // 10k files in parallel = Perfect for 32GB RAM!
     const PARSE_CHUNK = 10000;
     for (let i = 0; i < allFiles.length; i += PARSE_CHUNK) {
       const chunk = allFiles.slice(i, i + PARSE_CHUNK);
