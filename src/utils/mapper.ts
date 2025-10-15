@@ -27,7 +27,7 @@ const INT_FIELDS = [
 const FLOAT_FIELDS_NULLABLE = [
   "genericRate","specificRate","amount","netPrice","publicPrice",
   "marketPrice","amountSupplement","percentageSupplement","percentage",
-  "adultAmount","childAmount","ageAmount"
+  "adultAmount","childAmount","ageAmount","amountFrom","amountTo"
 ];
 
 export function mapRow(section: string, rows: Record<string, any>[]) {
@@ -38,6 +38,9 @@ export function mapRow(section: string, rows: Record<string, any>[]) {
     const mapped: Record<string, any> = {};
 
     mapper.forEach((fieldName, idx) => {
+      // Skip null field names (used for ignored/empty fields in ZIP)
+      if (fieldName === null || fieldName === undefined) return;
+      
       let value = row[`field_${idx}`];
 
       // Date fields -> MySQL datetime string

@@ -122,23 +122,6 @@ export class HotelBedFileController {
     }
   )
 
-  /**
-   * 🏨 Process GENERAL Folder (HotelMaster & BoardMaster)
-   * Run this if HotelMaster is empty but CONTRACT data exists
-   */
-  processGeneralFolder = asyncHandler(
-    async (req: any, res: Response, next: NextFunction): Promise<Response | void> => {
-      const extractPath = req.query.path as string || 
-        path.join(__dirname, '../../../../downloads/hotelbeds_full_1760032801');
-      
-      const result = await HotelBedTurboRepo.processGeneralFolder(extractPath);
-      
-      new SuccessResponse(
-        "✅ GENERAL folder processed successfully!",
-        result
-      ).send(res);
-    }
-  )
   // delete = asyncHandler(
   //   async (req: Request, res: Response, next: NextFunction): Promise<Response | void> => {
   //     const { coupleId } = req.params

@@ -55,24 +55,14 @@ export class PrecomputeService {
   async runFullPrecompute(): Promise<{
     processed: number;
     updated: number;
-    failed: number;
+    failed: number; // Note: "failed" is actually "skipped" (no price/inventory data)
     duration: number;
   }> {
     const startTime = Date.now();
-    Logger.info('🚀 Starting TURBO precompute job (RAW SQL)...');
-    Logger.info(`⚡ Concurrency: ${this.config.concurrency} | Horizon: ${this.config.horizonDays} days`);
+    Logger.info('⚡ Starting ULTRA-FAST precompute (BULK MODE)...');
+    Logger.info(`⚡ Horizon: ${this.config.horizonDays} days`);
 
     try {
-      // RAW SQL: Get all unique hotels from HotelMaster (FAST!)
-      const [hotels] = await this.pool.execute<any[]>(`
-        SELECT DISTINCT hotelCode, accommodationType, destinationCode 
-        FROM HotelMaster 
-        WHERE hotelCode IS NOT NULL
-      `);
-
-      Logger.info(`Found ${hotels.length} hotels to process\n`);
-
-      // Calculate date range
       const today = new Date();
       const futureDate = new Date(today);
       futureDate.setDate(today.getDate() + this.config.horizonDays);
@@ -80,103 +70,114 @@ export class PrecomputeService {
       const todayStr = today.toISOString().split('T')[0];
       const futureDateStr = futureDate.toISOString().split('T')[0];
 
-      // Process hotels with high concurrency
-      const limit = pLimit(this.config.concurrency);
-      let processed = 0;
-      let updated = 0;
-      let failed = 0;
-      const priceEntries: any[] = [];
+      // STEP 1: Fetch ALL hotels (1 query)
+      Logger.info('📊 Step 1/5: Fetching all hotels...');
+      const [hotels] = await this.pool.execute<any[]>(`
+        SELECT DISTINCT hotelCode, accommodationType, destinationCode 
+        FROM HotelMaster 
+        WHERE hotelCode IS NOT NULL
+      `);
+      Logger.info(`   ✅ Found ${hotels.length.toLocaleString()} hotels`);
 
-      const tasks = hotels.map((hotel) =>
-        limit(async () => {
-          try {
-            if (!hotel.hotelCode) {
-              failed++;
-              return;
-            }
-
-            // RAW SQL: Get inventory for this hotel (FAST!)
-            const [inventory] = await this.pool.execute<any[]>(`
-              SELECT calendarDate, roomCode, ratePlanId,
-                     allotment, stopSale, minNights, maxNights
-              FROM Inventory 
-              WHERE hotelCode = ? 
-                AND calendarDate >= ? 
-                AND calendarDate <= ?
-                AND stopSale = 0 
-                AND allotment > 0
-              ORDER BY calendarDate ASC 
-              LIMIT 200
-            `, [hotel.hotelCode, todayStr, futureDateStr]);
-
-            if (inventory.length < this.config.cityMinNights) {
-              processed++;
-              return;
-            }
-
-            // Determine categories for this hotel
-            const categories = this.determineCategories(hotel);
-            const hotelPrices: any[] = [];
-
-            for (const category of categories) {
-              const minNights = category.minNights;
-              
-              if (inventory.length >= minNights) {
-                // RAW SQL: Get base price (simple calculation for now)
-                const [costs] = await this.pool.execute<any[]>(`
-                  SELECT AVG(amount) as avgCost
-                  FROM Cost
-                  WHERE hotelCode = ?
-                    AND calendarDate >= ?
-                    AND calendarDate <= ?
-                  LIMIT 1
-                `, [hotel.hotelCode, todayStr, futureDateStr]);
-
-                const basePrice = costs.length > 0 && costs[0].avgCost 
-                  ? parseFloat(costs[0].avgCost) 
-                  : 100; // Fallback price
-                
-                const totalPrice = basePrice * minNights;
-                const pricePP = totalPrice / 2; // Double occupancy
-
-                hotelPrices.push({
-                  id: randomUUID(),
-                  hotelCode: hotel.hotelCode,
-                  categoryTag: category.tag,
-                  startDate: inventory[0].calendarDate,
-                  nights: minNights,
-                  boardCode: 'RO', // Default to Room Only
-                  pricePP: pricePP.toFixed(2),
-                  currency: 'EUR',
-                  ratePlanId: inventory[0].ratePlanId || null,
-                  roomCode: inventory[0].roomCode || null
-                });
-              }
-            }
-
-            if (hotelPrices.length > 0) {
-              priceEntries.push(...hotelPrices);
-              updated += hotelPrices.length;
-            }
-
-            processed++;
-
-            if (processed % 100 === 0) {
-              Logger.info(`⚡ Progress: ${processed}/${hotels.length} hotels | ${priceEntries.length} prices`);
-            }
-          } catch (error) {
-            Logger.error(`Failed to precompute hotel ${hotel.hotelCode}:`, error);
-            failed++;
-          }
-        })
+      // STEP 2: Fetch ALL supplement prices (1 query - SUPER FAST!)
+      Logger.info('💰 Step 2/5: Fetching all prices...');
+      const [supplements] = await this.pool.execute<any[]>(`
+        SELECT 
+          con.hotelCode,
+          AVG(s.amountSupplement) as avgPrice
+        FROM Supplement s
+        INNER JOIN Contract con ON s.hotelBedId = con.hotelBedId
+        WHERE s.startDate <= ?
+          AND s.endDate >= ?
+          AND s.amountSupplement IS NOT NULL
+          AND s.amountSupplement > 0
+        GROUP BY con.hotelCode
+      `, [futureDateStr, todayStr]);
+      
+      const priceMap = new Map(
+        supplements.map((s: any) => [s.hotelCode, parseFloat(s.avgPrice)])
       );
+      Logger.info(`   ✅ Found prices for ${priceMap.size.toLocaleString()} hotels`);
 
-      await Promise.all(tasks);
+      // STEP 3: Fetch ALL inventory (1 query - SUPER FAST!)
+      Logger.info('📦 Step 3/5: Fetching inventory...');
+      const [inventory] = await this.pool.execute<any[]>(`
+        SELECT 
+          hotelCode,
+          MIN(calendarDate) as firstDate,
+          roomCode,
+          ratePlanId,
+          COUNT(*) as dayCount
+        FROM Inventory 
+        WHERE calendarDate >= ? 
+          AND calendarDate <= ?
+          AND (stopSale IS NULL OR stopSale = 0)
+        GROUP BY hotelCode, roomCode, ratePlanId
+        HAVING COUNT(*) >= ?
+      `, [todayStr, futureDateStr, this.config.cityMinNights]);
+      
+      const inventoryMap = new Map(
+        inventory.map((i: any) => [i.hotelCode, {
+          firstDate: i.firstDate,
+          roomCode: i.roomCode,
+          ratePlanId: i.ratePlanId,
+          dayCount: i.dayCount
+        }])
+      );
+      Logger.info(`   ✅ Found inventory for ${inventoryMap.size.toLocaleString()} hotels`);
 
-      Logger.info(`\n✅ Calculation complete! Inserting ${priceEntries.length} price entries...\n`);
+      // STEP 4: Process in-memory (BLAZING FAST!)
+      Logger.info('⚡ Step 4/5: Processing in-memory...');
+      const priceEntries: any[] = [];
+      let processed = 0;
+      let skipped = 0;
 
-      // Batch insert into CheapestPricePerPerson (FAST!)
+      for (const hotel of hotels) {
+        const basePrice = priceMap.get(hotel.hotelCode);
+        const inv = inventoryMap.get(hotel.hotelCode);
+        
+        if (!basePrice || !inv) {
+          skipped++;
+          continue;
+        }
+
+        const categories = this.determineCategories(hotel);
+        
+        for (const category of categories) {
+          const minNights = category.minNights;
+          
+          if (inv.dayCount >= minNights) {
+            const totalPrice = basePrice * minNights;
+            const pricePP = totalPrice / 2;
+
+            priceEntries.push({
+              id: randomUUID(),
+              hotelCode: hotel.hotelCode,
+              categoryTag: category.tag,
+              startDate: inv.firstDate,
+              nights: minNights,
+              boardCode: 'RO',
+              pricePP: pricePP.toFixed(2),
+              currency: 'EUR',
+              ratePlanId: inv.ratePlanId,
+              roomCode: inv.roomCode
+            });
+          }
+        }
+        
+        processed++;
+      }
+
+      Logger.info(`   ✅ Generated ${priceEntries.length.toLocaleString()} price entries`);
+      Logger.info(`   ⚠️  Skipped ${skipped.toLocaleString()} hotels (no price/inventory)`);
+
+      // STEP 5: Batch insert (FAST!)
+      Logger.info('💾 Step 5/5: Inserting into database...');
+      await this.pool.execute('DELETE FROM CheapestPricePerPerson');
+      
       const BATCH_SIZE = 5000;
+      let inserted = 0;
+      
       for (let i = 0; i < priceEntries.length; i += BATCH_SIZE) {
         const batch = priceEntries.slice(i, i + BATCH_SIZE);
         
@@ -194,22 +195,27 @@ export class PrecomputeService {
           (id, hotelCode, categoryTag, startDate, nights, boardCode, pricePP, 
            currency, ratePlanId, roomCode, derivedAt, expiresAt) 
           VALUES ${placeholders}
-          ON DUPLICATE KEY UPDATE 
-            pricePP = VALUES(pricePP),
-            boardCode = VALUES(boardCode),
-            derivedAt = VALUES(derivedAt)
         `, values);
 
-        Logger.info(`   Inserted: ${Math.min(i + BATCH_SIZE, priceEntries.length)}/${priceEntries.length}`);
+        inserted += batch.length;
+        if (inserted % 10000 === 0 || inserted >= priceEntries.length) {
+          Logger.info(`   Inserted: ${inserted.toLocaleString()}/${priceEntries.length.toLocaleString()}`);
+        }
       }
 
       const duration = (Date.now() - startTime) / 1000;
-      Logger.info(
-        `\n🎉 TURBO Precompute complete: ${processed} processed, ${updated} updated, ${failed} failed in ${duration}s`
-      );
-      Logger.info(`⚡ Speed: ${(processed/duration).toFixed(1)} hotels/sec\n`);
 
-      return { processed, updated, failed, duration };
+      Logger.info('\n' + '═'.repeat(60));
+      Logger.info('🎉 ULTRA-FAST PRECOMPUTE COMPLETE!');
+      Logger.info('═'.repeat(60));
+      Logger.info(`✅ Processed: ${processed.toLocaleString()} hotels`);
+      Logger.info(`✅ Inserted: ${priceEntries.length.toLocaleString()} prices`);
+      Logger.info(`⚠️  Skipped: ${skipped.toLocaleString()} hotels (no price/inventory data)`);
+      Logger.info(`⏱️  Duration: ${duration.toFixed(2)}s`);
+      Logger.info(`⚡ Speed: ${(processed / duration).toFixed(0)} hotels/sec`);
+      Logger.info('═'.repeat(60) + '\n');
+
+      return { processed, updated: priceEntries.length, failed: skipped, duration };
     } catch (error) {
       Logger.error('❌ Precompute job failed:', error);
       throw error;
@@ -310,14 +316,10 @@ export class PrecomputeService {
           MIN(c.pricePP) as minPricePP,
           MAX(c.pricePP) as maxPricePP,
           AVG(c.pricePP) as avgPricePP,
-          EXISTS(
-            SELECT 1 FROM Inventory i 
-            WHERE i.hotelCode = h.hotelCode 
-              AND i.calendarDate >= CURDATE() 
-              AND i.stopSale = 0 
-              AND i.allotment > 0 
-            LIMIT 1
-          ) as hasAvailability,
+          CASE 
+            WHEN c.pricePP IS NOT NULL THEN 1
+            ELSE 0
+          END as hasAvailability,
           EXISTS(
             SELECT 1 FROM Promotion p
             WHERE p.isIncluded = 1

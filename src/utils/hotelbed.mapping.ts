@@ -1,6 +1,6 @@
 // src/utils/sectionMappers.ts
 
-export const sectionMappers: Record<string, string[]> = {
+export const sectionMappers: Record<string, (string | null)[]> = {
   // --- Hotel Master Information ---
   HOTEL: [
     "hotelCode",
@@ -111,15 +111,25 @@ export const sectionMappers: Record<string, string[]> = {
   ],
 
   // --- Minimum & Maximum Stay ---
+  // NOTE: ZIP format starts with empty field! :20250908:20250927:T::DBL:SU-VM::2:99:Y:Y:Y:Y:Y:Y:Y
   CNEM: [
-    "startDate",
-    "endDate",
-    "roomCode",
-    "characteristic",
-    "boardCode",
-    "checkInFlag",
-    "perDateFlag",
-    "daysRules"
+    null,           // field_0 is empty in ZIP
+    "startDate",    // field_1  - 20250908
+    "endDate",      // field_2  - 20250927
+    "checkInFlag",  // field_3  - T (true/false)
+    "perDateFlag",  // field_4  - empty (true/false)
+    "roomCode",     // field_5  - DBL
+    "characteristic", // field_6  - SU-VM
+    "boardCode",    // field_7  - empty or board code
+    "minNights",    // field_8  - 2
+    "maxNights",    // field_9  - 99
+    "monFlag",      // field_10 - Y (Monday)
+    "tueFlag",      // field_11 - Y (Tuesday)
+    "wedFlag",      // field_12 - Y (Wednesday)
+    "thuFlag",      // field_13 - Y (Thursday)
+    "friFlag",      // field_14 - Y (Friday)
+    "satFlag",      // field_15 - Y (Saturday)
+    "sunFlag"       // field_16 - Y (Sunday)
   ],
 
   // --- Supplements (Board / Pax) ---
@@ -159,14 +169,20 @@ export const sectionMappers: Record<string, string[]> = {
   ],
 
   // --- Cancellation Fees ---
+  // NOTE: ZIP format starts with empty field! :20250910:20251231::3:12:0.000:100.000:0.000:0.000::EN
   CNCF: [
-    "startDate",
-    "endDate",
-    "rateCode",
-    "daysBeforeCheckin",
-    "chargeType",
-    "amount",
-    "percentage"
+    null,              // field_0 is empty in ZIP
+    "startDate",       // field_1  - 20250910
+    "endDate",         // field_2  - 20251231
+    "rateCode",        // field_3  - empty or rate code
+    "daysBeforeCheckin", // field_4  - 3
+    "chargeType",      // field_5  - 12
+    "amount",          // field_6  - 0.000
+    "amountFrom",      // field_7  - 100.000 (additional amount field)
+    "amountTo",        // field_8  - 0.000 (additional amount field)
+    "percentage",      // field_9  - 0.000
+    null,              // field_10 - empty (reserved)
+    "languageCode"     // field_11 - EN (language)
   ],
 
   // --- Valid Rate Codes ---

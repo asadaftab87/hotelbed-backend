@@ -28,12 +28,6 @@ export class HotelBedRoutes {
       this.controller.updateSearchIndex
     )
 
-    // Process GENERAL folder only (HotelMaster, BoardMaster)
-    this.router.get(
-      '/process-general',
-      this.controller.processGeneralFolder
-    )
-
   }
 
 }

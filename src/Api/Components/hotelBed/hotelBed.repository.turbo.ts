@@ -430,7 +430,7 @@ export default class HotelBedTurboRepo {
     await pool.execute("DELETE FROM HotelMaster WHERE hotelBedId = ?", [fileId]);
 
     const content = fs.readFileSync(ghotPath, "utf-8");
-    const lines = content.split("\n").filter(l => l.trim());
+    const lines = content.split("\n").filter(l => l.trim() && !l.startsWith("{"));
 
     Logger.info(`   📊 Loading ${lines.length.toLocaleString()} hotels...`);
 
@@ -441,7 +441,10 @@ export default class HotelBedTurboRepo {
     for (const line of lines) {
       const fields = line.split(":");
 
-      if (fields.length >= 13) {
+      if (fields.length >= 12) {
+        // Hotel name can contain colons, so join everything from position 11 onwards
+        const hotelName = fields.slice(11).join(":").trim();
+        
         batch.push([
           randomUUID(),
           fileId,
@@ -454,10 +457,10 @@ export default class HotelBedTurboRepo {
           fields[6] === "1" ? 1 : 0,  // noHotelFlag
           fields[7] || null,  // countryCode
           fields[8] || null,  // accommodationType
-          fields[9] || null,  // accommodationCode
-          fields[10] || null, // latitude
-          fields[11] || null, // longitude
-          fields[12] || null, // hotelName
+          null,               // accommodationCode (not in GHOT_F format)
+          fields[9] || null,  // latitude
+          fields[10] || null, // longitude
+          hotelName || null,  // hotelName (joined from position 11+)
         ]);
 
         if (batch.length >= BATCH_SIZE) {
@@ -524,7 +527,7 @@ export default class HotelBedTurboRepo {
     await pool.execute("DELETE FROM BoardMaster WHERE hotelBedId = ?", [fileId]);
 
     const content = fs.readFileSync(gttoPath, "utf-8");
-    const lines = content.split("\n").filter(l => l.trim());
+    const lines = content.split("\n").filter(l => l.trim() && !l.startsWith("{"));
 
     Logger.info(`   📊 Loading ${lines.length.toLocaleString()} boards...`);
 
@@ -865,14 +868,78 @@ export default class HotelBedTurboRepo {
       } else if (line.startsWith("{/")) {
         currentSection = null;
       } else if (currentSection) {
-        const parts = line.split(":");
-        const row: Record<string, string> = {};
-        parts.forEach((val, i) => (row[`field_${i}`] = val));
-        sections[currentSection].push(row);
+        // ⚡ SPECIAL HANDLING for CNCT (Cost) section - Parse tuples!
+        if (currentSection === "CNCT") {
+          const parsedRows = this.parseCNCTLine(line);
+          sections[currentSection].push(...parsedRows);
+        } else {
+          const parts = line.split(":");
+          const row: Record<string, string> = {};
+          parts.forEach((val, i) => (row[`field_${i}`] = val));
+          sections[currentSection].push(row);
+        }
       }
     }
 
     return sections;
+  }
+
+  /**
+   * Parse CNCT line with tuples into individual Cost records
+   * Format: startDate:endDate:roomCode:characteristic:rateCode:releaseDays:allotment:(tuples)
+   * Tuple: (genericRate,netPrice,publicPrice,specificRate,boardCode,amount)
+   * Example: 20250910:20261008:DBL:C2-NI:::(N,0.000,0.000,0,RO,171.610)(N,0.000,0.000,0,RO,203.230)...
+   */
+  private static parseCNCTLine(line: string): any[] {
+    const parts = line.split(":");
+    
+    // Extract base fields (0-3) - fields 4-6 are empty in ZIP
+    const startDate = parts[0] || "";
+    const endDate = parts[1] || "";
+    const roomCode = parts[2] || "";
+    const characteristic = parts[3] || "";
+    // Note: parts[4] (rateCode), parts[5] (releaseDays), parts[6] (allotment) are empty in ZIP
+    
+    // Extract tuples (everything after field 6)
+    const tuplesStr = parts.slice(7).join(":"); // Re-join in case there are colons inside
+    
+    // Parse tuples: (N,0.000,0.000,0,RO,171.610)(N,0.000,0.000,0,RO,203.230)...
+    const tupleRegex = /\(([^)]+)\)/g;
+    const matches = [...tuplesStr.matchAll(tupleRegex)];
+    
+    const rows: any[] = [];
+    
+    for (const match of matches) {
+      const tupleData = match[1].split(",");
+      
+      // Tuple fields: genericRate, netPrice, publicPrice, specificRate, boardCode, amount
+      const genericRate = tupleData[0] || "";
+      const netPrice = tupleData[1] || "";
+      const publicPrice = tupleData[2] || "";
+      const specificRate = tupleData[3] || "";
+      const boardCode = tupleData[4] || "";
+      const amount = tupleData[5] || "";
+      
+      // Create row with all fields mapped
+      rows.push({
+        field_0: startDate,
+        field_1: endDate,
+        field_2: roomCode,
+        field_3: characteristic,
+        field_4: genericRate,
+        field_5: "",  // marketPriceCode (not in tuple)
+        field_6: "",  // perPaxFlag (not in tuple)
+        field_7: netPrice,
+        field_8: publicPrice,
+        field_9: specificRate,
+        field_10: boardCode,
+        field_11: amount,
+        field_12: "",  // validFrom (not in tuple)
+        field_13: ""   // validTo (not in tuple)
+      });
+    }
+    
+    return rows;
   }
 
   /**

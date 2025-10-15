@@ -26,10 +26,13 @@ export class HotelsController {
         let total = 0;
 
         try {
-          [hotels, total] = await Promise.all([
+          const [rawHotels, totalCount] = await Promise.all([
             prisma.searchIndex.findMany({
               where: {
                 hasAvailability: true,
+                minPricePP: {
+                  not: null,
+                },
               },
               select: {
                 hotelCode: true,
@@ -49,9 +52,20 @@ export class HotelsController {
             prisma.searchIndex.count({
               where: {
                 hasAvailability: true,
+                minPricePP: {
+                  not: null,
+                },
               },
             }),
           ]);
+          
+          // Convert Decimal to number
+          hotels = rawHotels.map(h => ({
+            ...h,
+            minPricePP: h.minPricePP ? parseFloat(h.minPricePP as any) : null,
+            rating: h.rating ? parseFloat(h.rating as any) : null,
+          }));
+          total = totalCount;
         } catch (searchIndexError) {
           Logger.warn('SearchIndex not available, using HotelMaster fallback');
           // Fallback to HotelMaster

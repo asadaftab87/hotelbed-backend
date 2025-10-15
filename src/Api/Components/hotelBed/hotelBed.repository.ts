@@ -194,13 +194,77 @@ export default class HotelBedFileRepo {
       } else if (line.startsWith("{/")) {
         currentSection = null;
       } else if (currentSection) {
-        const parts = line.split(":");
-        const row: Record<string, string> = {};
-        parts.forEach((val, i) => (row[`field_${i}`] = val));
-        sections[currentSection].push(row);
+        // ⚡ SPECIAL HANDLING for CNCT (Cost) section - Parse tuples!
+        if (currentSection === "CNCT") {
+          const parsedRows = this.parseCNCTLine(line);
+          sections[currentSection].push(...parsedRows);
+        } else {
+          const parts = line.split(":");
+          const row: Record<string, string> = {};
+          parts.forEach((val, i) => (row[`field_${i}`] = val));
+          sections[currentSection].push(row);
+        }
       }
     }
     return sections;
+  }
+
+  /**
+   * Parse CNCT line with tuples into individual Cost records
+   * Format: startDate:endDate:roomCode:characteristic:rateCode:releaseDays:allotment:(tuples)
+   * Tuple: (genericRate,netPrice,publicPrice,specificRate,boardCode,amount)
+   * Example: 20250910:20261008:DBL:C2-NI:::(N,0.000,0.000,0,RO,171.610)(N,0.000,0.000,0,RO,203.230)...
+   */
+  private static parseCNCTLine(line: string): any[] {
+    const parts = line.split(":");
+    
+    // Extract base fields (0-3) - fields 4-6 are empty in ZIP
+    const startDate = parts[0] || "";
+    const endDate = parts[1] || "";
+    const roomCode = parts[2] || "";
+    const characteristic = parts[3] || "";
+    // Note: parts[4] (rateCode), parts[5] (releaseDays), parts[6] (allotment) are empty in ZIP
+    
+    // Extract tuples (everything after field 6)
+    const tuplesStr = parts.slice(7).join(":"); // Re-join in case there are colons inside
+    
+    // Parse tuples: (N,0.000,0.000,0,RO,171.610)(N,0.000,0.000,0,RO,203.230)...
+    const tupleRegex = /\(([^)]+)\)/g;
+    const matches = [...tuplesStr.matchAll(tupleRegex)];
+    
+    const rows: any[] = [];
+    
+    for (const match of matches) {
+      const tupleData = match[1].split(",");
+      
+      // Tuple fields: genericRate, netPrice, publicPrice, specificRate, boardCode, amount
+      const genericRate = tupleData[0] || "";
+      const netPrice = tupleData[1] || "";
+      const publicPrice = tupleData[2] || "";
+      const specificRate = tupleData[3] || "";
+      const boardCode = tupleData[4] || "";
+      const amount = tupleData[5] || "";
+      
+      // Create row with all fields mapped
+      rows.push({
+        field_0: startDate,
+        field_1: endDate,
+        field_2: roomCode,
+        field_3: characteristic,
+        field_4: genericRate,
+        field_5: "",  // marketPriceCode (not in tuple)
+        field_6: "",  // perPaxFlag (not in tuple)
+        field_7: netPrice,
+        field_8: publicPrice,
+        field_9: specificRate,
+        field_10: boardCode,
+        field_11: amount,
+        field_12: "",  // validFrom (not in tuple)
+        field_13: ""   // validTo (not in tuple)
+      });
+    }
+    
+    return rows;
   }
 
   private static async buildInventoryTable(
@@ -314,63 +378,399 @@ export default class HotelBedFileRepo {
   }
 
   private static async processDir(dir: string, mode: "full" | "update") {
-    const files = await fs.promises.readdir(dir, { withFileTypes: true });
-    const limit = pLimit(CONCURRENCY);
+    const spinner = ora('🚀 Collecting all files...').start();
+    
+    // 🏨 SPECIAL HANDLING: Process GENERAL folder first (HotelMaster & BoardMaster)
+    const generalPath = path.join(dir, "GENERAL");
+    if (fs.existsSync(generalPath)) {
+      spinner.succeed('✅ Found GENERAL folder');
+      spinner.start('🏨 Processing GENERAL folder (HotelMaster & BoardMaster)...');
+      await this.processGeneralFolderInternal(generalPath);
+      spinner.succeed('✅ GENERAL folder processed');
+    }
+    
+    // 🚀 STEP 1: Collect ALL CONTRACT file paths (skip GENERAL)
+    spinner.start('🚀 Collecting CONTRACT files...');
+    const allFiles = await this.getAllFilePaths(dir, ['GENERAL']);
+    spinner.succeed(`✅ Found ${allFiles.length} CONTRACT files to process`);
 
-    await Promise.all(
-      files.map(file =>
-        limit(async () => {
-          const fullPath = path.join(dir, file.name);
-          if (file.isDirectory()) return this.processDir(fullPath, mode);
-          if (!file.isFile()) return;
+    // 🚀 STEP 2: Parse ALL files in parallel
+    spinner.start('📖 Parsing all files in parallel...');
+    const parseStart = Date.now();
+    
+    const allParsedData: Array<{
+      fileId: string;
+      fileName: string;
+      sections: Record<string, any[]>;
+    }> = [];
 
-          console.log(`📂 Processing ${file.name}`);
-
+    // Process in chunks to avoid memory overload
+    const PARSE_CHUNK = 1000;
+    for (let i = 0; i < allFiles.length; i += PARSE_CHUNK) {
+      const chunk = allFiles.slice(i, i + PARSE_CHUNK);
+      const chunkResults = await Promise.all(
+        chunk.map(async (filePath) => {
           try {
-            // ✅ Insert into HotelBedFile with UUID
-            const fileId = randomUUID();
-            await pool.query(
-              "INSERT INTO `HotelBedFile` (`id`, `name`, `createdAt`) VALUES (?, ?, NOW()) ON DUPLICATE KEY UPDATE id=VALUES(id)",
-              [fileId, file.name]
-            );
-
-            const jsonData = await this.parseFileToJson(fullPath);
-
-            // Store mapped data for later combination
-            const processedSections: Record<string, any[]> = {};
-
-            for (const [section, rows] of Object.entries(jsonData)) {
-              if (!rows.length) continue;
-              const mappedRows = mapRow(section, rows).map(r => ({
-                id: randomUUID(),
-                hotelBedId: fileId,
-                ...r,
-              }));
-
-              // Store for later use
-              processedSections[section] = mappedRows;
-
-              for (let i = 0; i < mappedRows.length; i += BATCH_SIZE) {
-                const chunk = mappedRows.slice(i, i + BATCH_SIZE);
-                const table = SECTION_TABLE_MAP[section];
-                if (!table) continue;
-
-                // 👇 for update feeds, enable overwrite (ON DUPLICATE)
-                await bulkInsertRaw(table, chunk, pool, {
-                  onDuplicate: mode === "update",
-                });
-              }
-            }
-
-            // ✅ After all sections processed, build Inventory from combined data
-            await this.buildInventoryTable(processedSections, fileId, pool);
-
-            console.log(`✅ Done ${file.name}`);
-          } catch (err: any) {
-            console.error(`❌ Failed ${file.name}:`, err.message);
+            const sections = await this.parseFileToJson(filePath);
+            return {
+              fileId: randomUUID(),
+              fileName: path.basename(filePath),
+              sections
+            };
+          } catch (error: any) {
+            console.error(`Error parsing ${filePath}:`, error.message);
+            return null;
           }
         })
-      )
+      );
+      
+      allParsedData.push(...chunkResults.filter(Boolean) as any);
+      spinner.text = `📖 Parsed ${Math.min(i + PARSE_CHUNK, allFiles.length)}/${allFiles.length} files...`;
+    }
+
+    const parseTime = ((Date.now() - parseStart) / 1000).toFixed(1);
+    spinner.succeed(`✅ Parsed ${allParsedData.length} files in ${parseTime}s`);
+
+    // 🚀 STEP 3: Aggregate data by section
+    spinner.start('🔄 Aggregating data by section...');
+    const aggregatedData: Record<string, any[]> = {};
+    const fileIdMap = new Map<string, string>();
+    
+    allParsedData.forEach(({ fileId, fileName, sections }) => {
+      fileIdMap.set(fileName, fileId);
+      
+      for (const [section, rows] of Object.entries(sections)) {
+        if (!rows || rows.length === 0) continue;
+        
+        if (!aggregatedData[section]) {
+          aggregatedData[section] = [];
+        }
+        
+        const mappedRows = mapRow(section, rows).map(r => ({
+          id: randomUUID(),
+          hotelBedId: fileId,
+          ...r,
+        }));
+        
+        aggregatedData[section].push(...mappedRows);
+      }
+    });
+
+    const totalRecords = Object.values(aggregatedData).reduce((sum, arr) => sum + arr.length, 0);
+    spinner.succeed(`✅ Aggregated ${totalRecords} records across ${Object.keys(aggregatedData).length} sections`);
+
+    // 🚀 STEP 4: Insert HotelBedFile records
+    spinner.start('💾 Inserting file records...');
+    const fileRecords = Array.from(fileIdMap.entries()).map(([fileName, fileId]) => ({
+      id: fileId,
+      name: fileName,
+      createdAt: new Date().toISOString().slice(0, 19).replace('T', ' ')
+    }));
+    
+    const FILE_BATCH = 5000;
+    for (let i = 0; i < fileRecords.length; i += FILE_BATCH) {
+      const chunk = fileRecords.slice(i, i + FILE_BATCH);
+      await bulkInsertRaw("HotelBedFile", chunk, pool, { onDuplicate: true });
+    }
+    spinner.succeed(`✅ Inserted ${fileRecords.length} file records`);
+
+    // 🚀 STEP 5: Bulk insert all sections
+    spinner.start('💾 Bulk inserting all data...');
+    const insertResults: Record<string, number> = {};
+    
+    const INSERT_BATCH = 5000;
+    for (const [section, rows] of Object.entries(aggregatedData)) {
+      const tableName = SECTION_TABLE_MAP[section];
+      if (!tableName) {
+        console.warn(`⚠️  No table mapping for section ${section}`);
+        continue;
+      }
+
+      spinner.text = `💾 Inserting ${rows.length} records into ${tableName}...`;
+      
+      for (let i = 0; i < rows.length; i += INSERT_BATCH) {
+        const chunk = rows.slice(i, i + INSERT_BATCH);
+        await bulkInsertRaw(tableName, chunk, pool, { onDuplicate: mode === "update" });
+      }
+      
+      insertResults[tableName] = rows.length;
+      spinner.succeed(`✅ ${tableName}: ${rows.length} records`);
+      spinner.start('💾 Continuing...');
+    }
+
+    spinner.succeed(`✅ All data inserted!`);
+
+    // 🚀 STEP 6: Build Inventory table
+    if (aggregatedData.CNIN && aggregatedData.CNIN.length > 0) {
+      spinner.start('🏗️ Building Inventory table...');
+      await this.buildInventoryTableUltra(allParsedData);
+      spinner.succeed('✅ Inventory table built');
+    }
+
+    console.log('\n📊 SUMMARY:');
+    console.log(`   Files processed: ${allParsedData.length}`);
+    console.log(`   Total records: ${totalRecords}`);
+    Object.entries(insertResults).forEach(([table, count]) => {
+      console.log(`   ${table}: ${count} records`);
+    });
+  }
+
+  /**
+   * 🚀 Recursively collect all file paths
+   */
+  private static async getAllFilePaths(dir: string, excludeDirs: string[] = []): Promise<string[]> {
+    const entries = await fs.promises.readdir(dir, { withFileTypes: true });
+    const paths: string[] = [];
+
+    for (const entry of entries) {
+      const fullPath = path.join(dir, entry.name);
+      if (entry.isDirectory()) {
+        // Skip excluded directories
+        if (excludeDirs.includes(entry.name)) {
+          continue;
+        }
+        const subPaths = await this.getAllFilePaths(fullPath, excludeDirs);
+        paths.push(...subPaths);
+      } else if (entry.isFile()) {
+        paths.push(fullPath);
+      }
+    }
+
+    return paths;
+  }
+
+  /**
+   * 🏨 Process GENERAL folder (HotelMaster & BoardMaster)
+   */
+  private static async processGeneralFolderInternal(generalDir: string) {
+    const fileId = randomUUID();
+    
+    // Create file record
+    await pool.query(
+      "INSERT INTO `HotelBedFile` (`id`, `name`, `createdAt`) VALUES (?, ?, NOW())",
+      [fileId, "GENERAL_IMPORT"]
     );
+
+    // Load GHOT_F (HotelMaster)
+    await this.loadHotelMaster(generalDir, fileId);
+
+    // Load GTTO_F (BoardMaster)
+    await this.loadBoardMaster(generalDir, fileId);
+  }
+
+  /**
+   * Load HotelMaster from GHOT_F
+   */
+  private static async loadHotelMaster(generalDir: string, fileId: string) {
+    const ghotPath = path.join(generalDir, "GHOT_F");
+
+    if (!fs.existsSync(ghotPath)) {
+      console.log("   ⚠️  GHOT_F not found");
+      return;
+    }
+
+    // Clear existing data
+    await pool.execute("DELETE FROM HotelMaster WHERE hotelBedId = ?", [fileId]);
+
+    const content = fs.readFileSync(ghotPath, "utf-8");
+    const lines = content.split("\n").filter(l => l.trim() && !l.startsWith("{"));
+
+    console.log(`   📊 Loading ${lines.length.toLocaleString()} hotels...`);
+
+    const BATCH_SIZE = 4000;
+    let inserted = 0;
+    let batch: any[] = [];
+
+    for (const line of lines) {
+      const fields = line.split(":");
+
+      if (fields.length >= 12) {
+        const hotelName = fields.slice(11).join(":").trim();
+        
+        batch.push([
+          randomUUID(),
+          fileId,
+          fields[0] || null,
+          fields[1] || null,
+          fields[2] || null,
+          fields[3] || null,
+          fields[4] || null,
+          fields[5] || null,
+          fields[6] === "1" ? 1 : 0,
+          fields[7] || null,
+          fields[8] || null,
+          null,
+          fields[9] || null,
+          fields[10] || null,
+          hotelName || null,
+        ]);
+
+        if (batch.length >= BATCH_SIZE) {
+          await this.bulkInsertHotelMaster(batch);
+          inserted += batch.length;
+          process.stdout.write(`\r   ⚡ Inserted: ${inserted.toLocaleString()} hotels  `);
+          batch = [];
+        }
+      }
+    }
+
+    if (batch.length > 0) {
+      await this.bulkInsertHotelMaster(batch);
+      inserted += batch.length;
+    }
+
+    console.log();
+    console.log(`   ✅ HotelMaster: ${inserted.toLocaleString()} hotels loaded`);
+  }
+
+  /**
+   * Load BoardMaster from GTTO_F
+   */
+  private static async loadBoardMaster(generalDir: string, fileId: string) {
+    const gttoPath = path.join(generalDir, "GTTO_F");
+
+    if (!fs.existsSync(gttoPath)) {
+      console.log("   ⚠️  GTTO_F not found");
+      return;
+    }
+
+    await pool.execute("DELETE FROM BoardMaster WHERE hotelBedId = ?", [fileId]);
+
+    const content = fs.readFileSync(gttoPath, "utf-8");
+    const lines = content.split("\n").filter(l => l.trim() && !l.startsWith("{"));
+
+    console.log(`   📊 Loading ${lines.length.toLocaleString()} boards...`);
+
+    const BATCH_SIZE = 10000;
+    let inserted = 0;
+    let batch: any[] = [];
+
+    for (const line of lines) {
+      const fields = line.split(":");
+
+      if (fields.length >= 3) {
+        batch.push([
+          randomUUID(),
+          fileId,
+          fields[0] || null,
+          fields[1] || null,
+          fields[2] || null,
+        ]);
+
+        if (batch.length >= BATCH_SIZE) {
+          await this.bulkInsertBoardMaster(batch);
+          inserted += batch.length;
+          batch = [];
+        }
+      }
+    }
+
+    if (batch.length > 0) {
+      await this.bulkInsertBoardMaster(batch);
+      inserted += batch.length;
+    }
+
+    console.log(`   ✅ BoardMaster: ${inserted.toLocaleString()} boards loaded`);
+  }
+
+  /**
+   * Bulk insert HotelMaster
+   */
+  private static async bulkInsertHotelMaster(batch: any[]) {
+    const placeholders = batch.map(() =>
+      "(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())"
+    ).join(",");
+
+    const values = batch.flat();
+
+    await pool.execute(`
+      INSERT INTO HotelMaster 
+      (id, hotelBedId, hotelCode, hotelCategory, destinationCode, chainCode,
+       contractMarket, ranking, noHotelFlag, countryCode, accommodationType,
+       accommodationCode, latitude, longitude, hotelName, createdAt)
+      VALUES ${placeholders}
+    `, values);
+  }
+
+  /**
+   * Bulk insert BoardMaster
+   */
+  private static async bulkInsertBoardMaster(batch: any[]) {
+    const placeholders = batch.map(() => "(?, ?, ?, ?, ?, NOW())").join(",");
+    const values = batch.flat();
+
+    await pool.execute(`
+      INSERT INTO BoardMaster
+      (id, hotelBedId, boardCode, boardType, boardName, createdAt)
+      VALUES ${placeholders}
+    `, values);
+  }
+
+  /**
+   * 🚀 Build Inventory table from aggregated data (ULTRA-FAST)
+   */
+  private static async buildInventoryTableUltra(
+    allParsedData: Array<{ fileId: string; fileName: string; sections: Record<string, any[]> }>
+  ) {
+    const inventoryRows: any[] = [];
+
+    for (const { fileId, sections } of allParsedData) {
+      const cninData = sections.CNIN || [];
+      const cnpvData = sections.CNPV || [];
+      const cnemData = sections.CNEM || [];
+      const cconData = sections.CCON || [];
+
+      if (!cninData.length) continue;
+
+      const contractRow = cconData[0];
+      const hotelCode = contractRow?.field_6 || null;
+
+      const stopSaleMap = new Map<string, boolean>();
+      cnpvData.forEach(pv => {
+        const key = `${pv.field_2 || ""}|${pv.field_3 || ""}|${pv.field_4 || ""}`;
+        stopSaleMap.set(key, pv.field_5 === "T");
+      });
+
+      const minMaxMap = new Map<string, { minNights?: number; maxNights?: number }>();
+      cnemData.forEach(em => {
+        const key = `${em.field_5 || ""}|${em.field_6 || ""}|${em.field_7 || ""}`;
+        const minNights = em.field_8 ? parseInt(em.field_8) : undefined;
+        const maxNights = em.field_9 ? parseInt(em.field_9) : undefined;
+        minMaxMap.set(key, { minNights, maxNights });
+      });
+
+      cninData.forEach(cnin => {
+        const roomCode = cnin.field_2 || "";
+        const characteristic = cnin.field_3 || "";
+        const rateCode = cnin.field_4 || "";
+        const lookupKey = `${roomCode}|${characteristic}|${rateCode}`;
+        const stopSale = stopSaleMap.get(lookupKey) || null;
+        const minMax = minMaxMap.get(`${roomCode}|${characteristic}|`) || {};
+
+        inventoryRows.push({
+          id: randomUUID(),
+          hotelBedId: fileId,
+          calendarDate: cnin.field_5 || "",
+          hotelCode: hotelCode,
+          roomCode: roomCode,
+          characteristic: characteristic,
+          ratePlanId: rateCode || null,
+          allotment: cnin.field_8 || null,
+          stopSale: stopSale,
+          releaseDays: cnin.field_7 || null,
+          cta: cnin.field_7 || null,
+          ctd: 0,
+          minNights: minMax.minNights || null,
+          maxNights: minMax.maxNights || null,
+          createdAt: new Date().toISOString().slice(0, 19).replace('T', ' ')
+        });
+      });
+    }
+
+    const INV_BATCH = 5000;
+    for (let i = 0; i < inventoryRows.length; i += INV_BATCH) {
+      const chunk = inventoryRows.slice(i, i + INV_BATCH);
+      await bulkInsertRaw("Inventory", chunk, pool, { onDuplicate: true });
+    }
   }
 }

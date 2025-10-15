@@ -191,12 +191,23 @@ model MinMaxStay {
 
   startDate      DateTime?
   endDate        DateTime?
+  checkInFlag    Boolean?   // T/F flag
+  perDateFlag    Boolean?   // T/F flag
   roomCode       String?
   characteristic String?
   boardCode      String?
-  checkInFlag    Boolean?
-  perDateFlag    Boolean?
-  daysRules      String? // e.g., "3-5" meaning min 3, max 5 nights
+  minNights      Int?       // Minimum nights required
+  maxNights      Int?       // Maximum nights allowed
+  monFlag        Boolean?   // Monday applicable
+  tueFlag        Boolean?   // Tuesday applicable
+  wedFlag        Boolean?   // Wednesday applicable
+  thuFlag        Boolean?   // Thursday applicable
+  friFlag        Boolean?   // Friday applicable
+  satFlag        Boolean?   // Saturday applicable
+  sunFlag        Boolean?   // Sunday applicable
+  
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 }
 
 /// Supplements (CNSR) - Currently empty in data but defined in documentation
@@ -255,7 +266,13 @@ model CancellationFee {
   daysBeforeCheckin Int?
   chargeType        String?
   amount            Float?
+  amountFrom        Float?    // field_7 - Additional amount/percentage field
+  amountTo          Float?    // field_8 - Additional amount/percentage field
   percentage        Float?
+  languageCode      String?   // field_11 - Language code (e.g., "EN")
+  
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 }
 
 /// Rate codes (CNTA)
