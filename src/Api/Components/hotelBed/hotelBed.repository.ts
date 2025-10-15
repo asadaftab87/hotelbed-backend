@@ -20,7 +20,7 @@ const pool = mysql.createPool({
   password: "Asad124@",
   database: "hotelbed",
   waitForConnections: true,
-  connectionLimit: 100, // Maximum for r7a.xlarge - now safe with per-batch commits
+  connectionLimit: 150, // ABSOLUTE MAXIMUM - 30k batch needs more connections
   queueLimit: 0, // No queue limit
   enableKeepAlive: true,
   keepAliveInitialDelay: 0,
@@ -419,7 +419,7 @@ export default class HotelBedFileRepo {
 
     // 🚀 STREAMING APPROACH: Parse batches → Insert immediately → Clear memory
     // This prevents OOM by not holding all 154k files in memory at once!
-    const SUPER_BATCH = 20000; // Process 20k files at a time - ULTIMATE for 32GB RAM with proper heap
+    const SUPER_BATCH = 30000; // Process 30k files at a time - ABSOLUTE MAXIMUM for 32GB RAM
     const totalFiles = allFiles.length;
     let totalProcessed = 0;
     const globalInsertResults: Record<string, number> = {};
@@ -492,7 +492,7 @@ export default class HotelBedFileRepo {
       }
       
       // Insert section data for this batch
-      const INSERT_BATCH = 15000; // Increased for faster inserts with proper heap
+      const INSERT_BATCH = 20000; // MAXIMUM batch size for fastest inserts
       for (const [section, rows] of Object.entries(batchAggregated)) {
         const tableName = SECTION_TABLE_MAP[section];
         if (!tableName) continue;
