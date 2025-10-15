@@ -9,7 +9,7 @@
     "dev": "cross-env NODE_ENV=development ts-node-dev --respawn --transpile-only src/app.ts",
     "start:dev": "cross-env NODE_ENV=development ts-node-dev --respawn --transpile-only src/app.ts",
     "start:prod": "node dist/src/app.js",
-    "serve": "node --max-old-space-size=8192 dist/src/app.js",
+    "serve": "node --max-old-space-size=28672 dist/src/app.js",
     "build": "npm run clean && npm run build-ts && npm run keys",
     "build-ts": "tsc",
     "keys": "cpx \"keys/**/*\" dist/keys",
