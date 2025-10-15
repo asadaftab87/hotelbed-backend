@@ -13,13 +13,22 @@ const BASE_URL = "https://aif2.hotelbeds.com/aif2-pub-ws/files";
 const BATCH_SIZE = 2000;
 const CONCURRENCY = 5;
 
+// 🚀 OPTIMIZATION 5: Increased connection pool for parallel processing
 const pool = mysql.createPool({
   host: "54.85.142.212",
   user: "asadaftab",
   password: "Asad124@",
   database: "hotelbed",
   waitForConnections: true,
-  connectionLimit: 20,
+  connectionLimit: 100, // Increased from 20 → 100 for MAXIMUM parallel inserts
+  queueLimit: 0, // No queue limit
+  enableKeepAlive: true,
+  keepAliveInitialDelay: 0,
+  // Additional performance settings
+  multipleStatements: true,
+  dateStrings: true,
+  supportBigNumbers: true,
+  bigNumberStrings: true,
 });
 
 const SECTION_TABLE_MAP: Record<string, string> = {
@@ -177,32 +186,46 @@ export default class HotelBedFileRepo {
       throw err;
     }
   }
+  // 🚀 OPTIMIZATION 4: Optimized parsing with minimal operations
   private static async parseFileToJson(filePath: string) {
     const content = await fs.promises.readFile(filePath, "utf8");
     const lines = content.split("\n");
 
     const sections: Record<string, any[]> = {};
     let currentSection: string | null = null;
+    let currentArray: any[] | null = null; // Cache current section array
 
-    for (const rawLine of lines) {
+    for (let i = 0; i < lines.length; i++) {
+      const rawLine = lines[i];
+      if (!rawLine) continue;
+      
       const line = rawLine.trim();
       if (!line) continue;
 
-      if (line.startsWith("{") && !line.startsWith("{/")) {
-        currentSection = line.replace(/[{}]/g, "");
-        sections[currentSection] = [];
-      } else if (line.startsWith("{/")) {
-        currentSection = null;
-      } else if (currentSection) {
+      const firstChar = line[0];
+      
+      // Fast check for section markers
+      if (firstChar === "{") {
+        if (line[1] === "/") {
+          currentSection = null;
+          currentArray = null;
+        } else {
+          currentSection = line.slice(1, -1); // Faster than replace
+          currentArray = [];
+          sections[currentSection] = currentArray;
+        }
+      } else if (currentSection && currentArray) {
         // ⚡ SPECIAL HANDLING for CNCT (Cost) section - Parse tuples!
         if (currentSection === "CNCT") {
           const parsedRows = this.parseCNCTLine(line);
-          sections[currentSection].push(...parsedRows);
+          currentArray.push(...parsedRows);
         } else {
           const parts = line.split(":");
           const row: Record<string, string> = {};
-          parts.forEach((val, i) => (row[`field_${i}`] = val));
-          sections[currentSection].push(row);
+          for (let j = 0; j < parts.length; j++) {
+            row[`field_${j}`] = parts[j];
+          }
+          currentArray.push(row);
         }
       }
     }
@@ -404,8 +427,10 @@ export default class HotelBedFileRepo {
       sections: Record<string, any[]>;
     }> = [];
 
-    // Process in chunks to avoid memory overload
-    const PARSE_CHUNK = 1000;
+    // 🚀 OPTIMIZATION 1: Increase parallelism (1000 → 10000)
+    // More files processed in parallel = FASTER!
+    // c7a.xlarge has 4 vCPUs - can handle 10k parallel promises
+    const PARSE_CHUNK = 10000;
     for (let i = 0; i < allFiles.length; i += PARSE_CHUNK) {
       const chunk = allFiles.slice(i, i + PARSE_CHUNK);
       const chunkResults = await Promise.all(
@@ -478,25 +503,48 @@ export default class HotelBedFileRepo {
     spinner.start('💾 Bulk inserting all data...');
     const insertResults: Record<string, number> = {};
     
-    const INSERT_BATCH = 5000;
-    for (const [section, rows] of Object.entries(aggregatedData)) {
-      const tableName = SECTION_TABLE_MAP[section];
-      if (!tableName) {
-        console.warn(`⚠️  No table mapping for section ${section}`);
-        continue;
-      }
+    // 🚀 OPTIMIZATION 2: Increase batch size (5000 → 15000)
+    // Larger batches = Fewer queries = FASTER!
+    const INSERT_BATCH = 15000;
+    
+    // 🚀 OPTIMIZATION 3: Disable foreign key checks for speed
+    await pool.query('SET foreign_key_checks = 0');
+    await pool.query('SET unique_checks = 0');
+    await pool.query('SET autocommit = 0');
+    
+    // 🚀 OPTIMIZATION 6: PARALLEL section inserts (different tables = safe!)
+    const sectionEntries = Object.entries(aggregatedData);
+    const PARALLEL_TABLES = 3; // Insert 3 tables at a time in parallel
+    
+    for (let t = 0; t < sectionEntries.length; t += PARALLEL_TABLES) {
+      const parallelBatch = sectionEntries.slice(t, t + PARALLEL_TABLES);
+      
+      await Promise.all(
+        parallelBatch.map(async ([section, rows]) => {
+          const tableName = SECTION_TABLE_MAP[section];
+          if (!tableName) {
+            console.warn(`⚠️  No table mapping for section ${section}`);
+            return;
+          }
 
-      spinner.text = `💾 Inserting ${rows.length} records into ${tableName}...`;
-      
-      for (let i = 0; i < rows.length; i += INSERT_BATCH) {
-        const chunk = rows.slice(i, i + INSERT_BATCH);
-        await bulkInsertRaw(tableName, chunk, pool, { onDuplicate: mode === "update" });
-      }
-      
-      insertResults[tableName] = rows.length;
-      spinner.succeed(`✅ ${tableName}: ${rows.length} records`);
-      spinner.start('💾 Continuing...');
+          spinner.text = `💾 Inserting ${rows.length} records into ${tableName}...`;
+          
+          for (let i = 0; i < rows.length; i += INSERT_BATCH) {
+            const chunk = rows.slice(i, i + INSERT_BATCH);
+            await bulkInsertRaw(tableName, chunk, pool, { onDuplicate: mode === "update" });
+          }
+          
+          insertResults[tableName] = rows.length;
+          spinner.succeed(`✅ ${tableName}: ${rows.length} records`);
+        })
+      );
     }
+    
+    // 🚀 Re-enable checks and commit
+    await pool.query('COMMIT');
+    await pool.query('SET foreign_key_checks = 1');
+    await pool.query('SET unique_checks = 1');
+    await pool.query('SET autocommit = 1');
 
     spinner.succeed(`✅ All data inserted!`);
 
