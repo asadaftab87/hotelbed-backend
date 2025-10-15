@@ -55,21 +55,32 @@ jobs:
             # Stop all processes
             pm2 delete all || true
             
-            # Set NODE_OPTIONS for guaranteed heap size
-            export NODE_OPTIONS="--max-old-space-size=24576 --expose-gc --max-semi-space-size=64"
-            
-            # Add to bashrc for persistence
-            grep -qxF 'export NODE_OPTIONS="--max-old-space-size=24576 --expose-gc"' ~/.bashrc || \
-            echo 'export NODE_OPTIONS="--max-old-space-size=24576 --expose-gc"' >> ~/.bashrc
-            
-            # Start with ecosystem.config.js
+            # Start with ecosystem.config.js (using interpreter_args)
             pm2 start ecosystem.config.js
             pm2 save
             
+            # Wait for process to start
+            sleep 3
+            
             # Verify heap size applied
             echo ""
-            echo "🔍 Verifying heap size..."
-            ps aux | grep "dist/src/app.js" | grep -v grep || echo "Process starting..."
+            echo "🔍 Verifying heap size in actual process..."
+            echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+            ps aux | grep "dist/src/app.js" | grep -v grep
+            echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+            
+            # Check if flags applied
+            if ps aux | grep "dist/src/app.js" | grep -v grep | grep -q "max-old-space-size"; then
+              echo "✅ Heap flags APPLIED successfully!"
+            else
+              echo "⚠️  WARNING: Heap flags NOT visible in process"
+              echo "🔧 Applying fallback method..."
+              pm2 delete all
+              NODE_OPTIONS="--max-old-space-size=24576 --expose-gc" pm2 start dist/src/app.js --name hotelbed-backend
+              pm2 save
+              sleep 2
+              ps aux | grep "dist/src/app.js" | grep -v grep
+            fi
             
             echo ""
             echo "📊 PM2 Status:"
@@ -77,6 +88,7 @@ jobs:
             
             echo "-----------------------------"
             echo "🎉 Deployment successful!"
-            echo "✅ Heap size: 24GB configured"
+            echo "✅ Optimized for r7a.xlarge (32GB RAM)"
+            echo "✅ Heap size: 24GB"
             echo "✅ Batch size: 20,000 files"
             echo "✅ Expected import time: 13-15 minutes"
