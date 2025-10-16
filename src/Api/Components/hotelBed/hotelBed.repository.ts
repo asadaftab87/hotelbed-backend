@@ -14,14 +14,14 @@ const BATCH_SIZE = 2000;
 const CONCURRENCY = 5;
 
 
-// 🔥 BEAST MODE POOL: 250 files parallel processing!
+// 🔥🔥🔥 ABSOLUTE MAXIMUM POOL FOR r7a.xlarge! 🔥🔥🔥
 const pool = mysql.createPool({
   host: "107.21.156.43",
   user: "asadaftab",
   password: "Asad124@",
   database: "hotelbed",
   waitForConnections: true,
-  connectionLimit: 150, // 🔥 Maximum for 250 concurrent files
+  connectionLimit: 250, // 🔥 MAXIMUM connections for 400 files!
   queueLimit: 0,
   enableKeepAlive: true,
   keepAliveInitialDelay: 0,
@@ -438,9 +438,9 @@ export default class HotelBedFileRepo {
     const allFiles = await this.getAllFilePaths(dir, ['GENERAL']);
     spinner.succeed(`✅ Found ${allFiles.length} CONTRACT files to process`);
 
-    // 🔥 ULTRA-HIGH CONCURRENCY: Maximum parallel processing!
-    // ⚡ BEAST MODE: 250 files parallel for maximum speed!
-    const FILE_CONCURRENCY = 250; // 🔥 250 files parallel (independent!)
+    // 🔥🔥🔥 ABSOLUTE MAXIMUM FOR r7a.xlarge (32GB RAM + 4 vCPUs)! 🔥🔥🔥
+    // ⚡ Pushing machine to its limits for BLAZING speed!
+    const FILE_CONCURRENCY = 400; // 🔥 400 files parallel (ABSOLUTE MAX!)
     const totalFiles = allFiles.length;
     const globalInsertResults: Record<string, number> = {};
     
@@ -449,11 +449,11 @@ export default class HotelBedFileRepo {
     await pool.query('SET unique_checks = 0');
     await pool.query('SET sql_log_bin = 0');
     
-    console.log(`\n🔥 BEAST MODE: 250 files parallel processing!`);
-    console.log(`⚡ HAND-TO-HAND: Parse → Insert → Parse → Insert!`);
-    console.log(`💪 ${FILE_CONCURRENCY} files parallel | 150 DB connections | 10k batches | MySQL UUID`);
-    console.log(`📊 Progress every 60s | Expected: ~70-80 minutes`);
-    spinner.start(`🔥 Processing ${totalFiles} files at BEAST MODE...`);
+    console.log(`\n🔥🔥🔥 ABSOLUTE MAXIMUM PERFORMANCE - r7a.xlarge UNLEASHED! 🔥🔥🔥`);
+    console.log(`⚡ HAND-TO-HAND: File → Parse → Insert → Next (ZERO delays!)`);
+    console.log(`💪 ${FILE_CONCURRENCY} files parallel | 250 DB connections | 20k insert batches | MySQL UUID`);
+    console.log(`📊 Progress every 60s | Expected: ~40-50 minutes!`);
+    spinner.start(`🔥 MAXIMUM POWER: Processing ${totalFiles} files...`);
     const processStart = Date.now();
     
     // ⚡ Progress tracking
@@ -494,8 +494,8 @@ export default class HotelBedFileRepo {
               mapped[j].hotelBedId = fileId;
             }
             
-            // Insert immediately (large batches for speed)
-            const INSERT_BATCH = 10000;
+            // Insert immediately (ABSOLUTE MAXIMUM batches!)
+            const INSERT_BATCH = 20000; // 🔥 ABSOLUTE MAX batch size!
             for (let i = 0; i < mapped.length; i += INSERT_BATCH) {
               const chunk = mapped.slice(i, i + INSERT_BATCH);
               await bulkInsertRaw(tableName, chunk, pool, { onDuplicate: mode === "update" });
