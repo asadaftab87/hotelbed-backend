@@ -14,14 +14,14 @@ const BATCH_SIZE = 2000;
 const CONCURRENCY = 5;
 
 
-// ⚡ TRUE STREAMING POOL: Optimized for continuous flow!
+// 🎯 BALANCED POOL: Optimized to avoid lock timeouts
 const pool = mysql.createPool({
   host: "107.21.156.43",
   user: "asadaftab",
   password: "Asad124@",
   database: "hotelbed",
   waitForConnections: true,
-  connectionLimit: 100, // ⚡ Max connections for 15 parallel inserts
+  connectionLimit: 40, // 🎯 Balanced - enough for 5 parallel inserts
   queueLimit: 0,
   enableKeepAlive: true,
   keepAliveInitialDelay: 0,
@@ -438,10 +438,10 @@ export default class HotelBedFileRepo {
     const allFiles = await this.getAllFilePaths(dir, ['GENERAL']);
     spinner.succeed(`✅ Found ${allFiles.length} CONTRACT files to process`);
 
-    // ⚡ TRUE STREAMING: Parse → Insert immediately → No waiting!
-    // 🔥 HAND-TO-HAND: Data never stops, always flowing to DB
-    const MICRO_BATCH = 200; // ⚡ Ultra-small batches for instant insertion
-    const PARSE_CONCURRENCY = 150; // 🔥 Max parallel parsing
+    // 🎯 OPTIMIZED STREAMING: Balance between speed and stability
+    // ⚡ Fast flow without lock timeouts
+    const MICRO_BATCH = 800; // 🎯 Balanced batch size
+    const PARSE_CONCURRENCY = 120; // 🎯 Controlled parsing
     const totalFiles = allFiles.length;
     let totalProcessed = 0;
     const globalInsertResults: Record<string, number> = {};
@@ -453,9 +453,8 @@ export default class HotelBedFileRepo {
     await pool.query('SET sql_log_bin = 0'); // 🚀 Disable binary logging - 20-30% faster!
     // Note: innodb_flush_log_at_trx_commit is GLOBAL only (too risky to change server-wide)
     
-    console.log(`\n⚡ TRUE STREAMING MODE: Parse → Insert → Parse → Insert...`);
-    console.log(`🔥 NO WAITING! Data flows directly: File → DB instantly!`);
-    console.log(`💪 Micro-batches of ${MICRO_BATCH} files for continuous flow!`);
+    console.log(`\n🎯 OPTIMIZED STREAMING: Fast + Stable (No lock timeouts!)`);
+    console.log(`⚡ Batches of ${MICRO_BATCH} files | 5 parallel inserts | 40 DB connections`);
     spinner.start(`⚡ STREAMING ${totalFiles} files...`);
     const processStart = Date.now();
     
@@ -512,9 +511,9 @@ export default class HotelBedFileRepo {
         await bulkInsertRaw("HotelBedFile", fileRecords, pool, { onDuplicate: true });
       }
       
-      // ⚡ INSTANT INSERTION: Maximum parallel inserts
-      const INSERT_BATCH = 10000; // 🔥 Large batch for fewer queries
-      const insertLimit = pLimit(15); // 🔥 15 tables parallel for max speed
+      // ⚡ CONTROLLED INSERTION: Balanced for no locks
+      const INSERT_BATCH = 6000; // 🎯 Balanced batch size
+      const insertLimit = pLimit(5); // 🎯 5 tables parallel - no lock timeout!
       
       await Promise.all(
         Object.entries(batchAggregated).map(([section, rows]) =>
