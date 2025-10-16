@@ -465,16 +465,13 @@ export default class HotelBedFileRepo {
     const totalFiles = allFiles.length;
     const globalInsertResults: Record<string, number> = {};
     
-    // ⚡ ULTRA-FAST MySQL performance tuning (RDS-OPTIMIZED!)
+    // ⚡ ULTRA-FAST MySQL performance tuning (RDS-COMPATIBLE!)
     await pool.query('SET SESSION foreign_key_checks = 0');
     await pool.query('SET SESSION unique_checks = 0');
     await pool.query('SET SESSION autocommit = 1');
-    await pool.query('SET SESSION sql_log_bin = 0'); // If RDS allows
     
-    // RDS Network optimizations
-    await pool.query('SET SESSION max_allowed_packet = 1073741824'); // 1GB for large batches
-    await pool.query('SET SESSION net_write_timeout = 600'); // 10 min for slow network
-    await pool.query('SET SESSION net_read_timeout = 600');  // 10 min
+    // Note: RDS doesn't allow changing max_allowed_packet, net_timeouts at SESSION level
+    // These must be configured in RDS parameter group (already optimized for production)
     
     console.log(`\n🎯 SWEET SPOT MODE: Sustained high performance!`);
     console.log(`⚡ HAND-TO-HAND: File → Parse → Insert → Next (INSTANT flow!)`);
@@ -548,7 +545,6 @@ export default class HotelBedFileRepo {
     spinner.start('💾 Finalizing...');
     await pool.query('SET SESSION foreign_key_checks = 1');
     await pool.query('SET SESSION unique_checks = 1');
-    await pool.query('SET SESSION sql_log_bin = 1');
     spinner.succeed(`✅ All data committed!`);
 
     // 🏗️ Build Inventory table from Restriction + other tables
