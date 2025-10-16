@@ -14,14 +14,14 @@ const BATCH_SIZE = 2000;
 const CONCURRENCY = 5;
 
 
-// 🔥 MAXIMUM POOL FOR MySQL max_connections=500!
+// 🎯 BALANCED POOL: Optimized for sustained performance
 const pool = mysql.createPool({
   host: "107.21.156.43",
   user: "asadaftab",
   password: "Asad124@",
   database: "hotelbed",
   waitForConnections: true,
-  connectionLimit: 350, // 🔥 70% of MySQL's 500 max (safe buffer for other processes)
+  connectionLimit: 80, // 🎯 Balanced for 100 concurrent files (no degradation!)
   queueLimit: 0,
   enableKeepAlive: true,
   keepAliveInitialDelay: 0,
@@ -438,9 +438,9 @@ export default class HotelBedFileRepo {
     const allFiles = await this.getAllFilePaths(dir, ['GENERAL']);
     spinner.succeed(`✅ Found ${allFiles.length} CONTRACT files to process`);
 
-    // 🔥🔥🔥 ABSOLUTE MAXIMUM (MySQL max_connections = 500!) 🔥🔥🔥
-    // ⚡ Using 70% of MySQL capacity (350 pool / 500 max = safe buffer!)
-    const FILE_CONCURRENCY = 350; // 🔥 350 files parallel (MAXIMUM with 500 MySQL limit!)
+    // 🎯 SWEET SPOT: Optimized for sustained high performance
+    // ⚡ 100 files = Maximum speed WITHOUT degradation!
+    const FILE_CONCURRENCY = 100; // 🎯 100 files parallel (SWEET SPOT!)
     const totalFiles = allFiles.length;
     const globalInsertResults: Record<string, number> = {};
     
@@ -449,11 +449,11 @@ export default class HotelBedFileRepo {
     await pool.query('SET unique_checks = 0');
     await pool.query('SET sql_log_bin = 0');
     
-    console.log(`\n🔥🔥🔥 MAXIMUM MODE: MySQL max_connections=500 UNLEASHED! 🔥🔥🔥`);
+    console.log(`\n🎯 SWEET SPOT MODE: Sustained high performance!`);
     console.log(`⚡ HAND-TO-HAND: File → Parse → Insert → Next (INSTANT flow!)`);
-    console.log(`💪 ${FILE_CONCURRENCY} files parallel | 350 pool connections | 20k batches | MySQL UUID`);
-    console.log(`📊 Progress every 60s | Expected: ~45-55 minutes (BLAZING FAST!)`);
-    spinner.start(`🔥 MAXIMUM POWER: Processing ${totalFiles} files...`);
+    console.log(`💪 ${FILE_CONCURRENCY} files parallel | 80 DB connections | 20k batches | MySQL UUID`);
+    console.log(`📊 Progress every 60s | Expected: ~80-100 minutes (STABLE + FAST!)`);
+    spinner.start(`⚡ Processing ${totalFiles} files at OPTIMAL SPEED...`);
     const processStart = Date.now();
     
     // ⚡ Progress tracking
