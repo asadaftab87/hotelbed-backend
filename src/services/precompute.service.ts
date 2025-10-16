@@ -317,7 +317,7 @@ export class PrecomputeService {
           MAX(c.pricePP) as maxPricePP,
           AVG(c.pricePP) as avgPricePP,
           CASE 
-            WHEN c.pricePP IS NOT NULL THEN 1
+            WHEN MIN(c.pricePP) IS NOT NULL THEN 1
             ELSE 0
           END as hasAvailability,
           EXISTS(
