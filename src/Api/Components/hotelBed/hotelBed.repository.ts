@@ -439,8 +439,8 @@ export default class HotelBedFileRepo {
     spinner.succeed(`✅ Found ${allFiles.length} CONTRACT files to process`);
 
     // 🎯 SWEET SPOT: Optimized for sustained high performance
-    // ⚡ 100 files = Maximum speed WITHOUT degradation!
-    const FILE_CONCURRENCY = 100; // 🎯 100 files parallel (SWEET SPOT!)
+    // ⚡ 50 files = STABLE speed WITHOUT degradation!
+    const FILE_CONCURRENCY = 50; // 🎯 50 files parallel (STABLE SPEED!)
     const totalFiles = allFiles.length;
     const globalInsertResults: Record<string, number> = {};
     
@@ -451,8 +451,8 @@ export default class HotelBedFileRepo {
     
     console.log(`\n🎯 SWEET SPOT MODE: Sustained high performance!`);
     console.log(`⚡ HAND-TO-HAND: File → Parse → Insert → Next (INSTANT flow!)`);
-    console.log(`💪 ${FILE_CONCURRENCY} files parallel | 80 DB connections | 20k batches | MySQL UUID`);
-    console.log(`📊 Progress every 60s | Expected: ~80-100 minutes (STABLE + FAST!)`);
+    console.log(`💪 ${FILE_CONCURRENCY} files parallel | 60 DB connections | 20k batches | MySQL UUID`);
+    console.log(`📊 Progress every 60s | Expected: ~100-120 minutes (STABLE + FAST!)`);
     spinner.start(`⚡ Processing ${totalFiles} files at OPTIMAL SPEED...`);
     const processStart = Date.now();
     
