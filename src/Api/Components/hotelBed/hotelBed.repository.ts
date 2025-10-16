@@ -12,8 +12,9 @@ import ora from "ora";
 const BASE_URL = "https://aif2.hotelbeds.com/aif2-pub-ws/files";
 
 // 🚀 RDS-OPTIMIZED: Larger batches = fewer network round trips!
-const BATCH_SIZE = 5000;        // Increased for RDS (was 2000)
-const INSERT_BATCH = 30000;     // Max batch for inserts (reduce round trips)
+// BUT: MySQL has 65,535 placeholder limit per prepared statement!
+const BATCH_SIZE = 5000;        // General batch size
+const INSERT_BATCH = 2000;      // Safe for all tables (65535/30 fields = 2184 max)
 const CONCURRENCY = 8;          // Increased parallelism (RDS can handle more)
 
 
@@ -653,7 +654,9 @@ export default class HotelBedFileRepo {
 
     console.log(`   📊 Loading ${lines.length.toLocaleString()} hotels...`);
 
-    const HOTEL_BATCH = 10000; // RDS: Larger batches for fewer network calls
+    // MySQL placeholder limit: 65,535
+    // HotelMaster has 16 fields, so max batch = 65535/16 = 4096
+    const HOTEL_BATCH = 4000; // Safe limit for prepared statements
     let inserted = 0;
     let batch: any[] = [];
 
@@ -843,7 +846,9 @@ export default class HotelBedFileRepo {
       });
     }
 
-    const INV_BATCH = 15000; // RDS: Increased for fewer network round trips
+    // MySQL placeholder limit: 65,535
+    // Inventory has ~15 fields, so max batch = 65535/15 = 4369
+    const INV_BATCH = 4000; // Safe limit for prepared statements
     for (let i = 0; i < inventoryRows.length; i += INV_BATCH) {
       const chunk = inventoryRows.slice(i, i + INV_BATCH);
       await bulkInsertRaw("Inventory", chunk, pool, { onDuplicate: true });
@@ -980,7 +985,9 @@ export default class HotelBedFileRepo {
     console.log(`   📦 Total inventory rows to insert: ${inventoryRows.length}`);
 
     // Bulk insert inventory
-    const INV_BATCH = 15000; // RDS: Increased for fewer network round trips
+    // MySQL placeholder limit: 65,535
+    // Inventory has ~15 fields, so max batch = 65535/15 = 4369
+    const INV_BATCH = 4000; // Safe limit for prepared statements
     for (let i = 0; i < inventoryRows.length; i += INV_BATCH) {
       const chunk = inventoryRows.slice(i, i + INV_BATCH);
       await bulkInsertRaw("Inventory", chunk, pool, { onDuplicate: true });
