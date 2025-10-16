@@ -201,7 +201,6 @@ export class HotelsRoutes {
      *       - Basic information (name, category, chain)
      *       - Location (country, destination, coordinates)
      *       - Amenities with codes
-     *       - Nearby landmarks with distances
      *       - Ratings and contact information
      *       
      *       **Cache**: 24 hours TTL

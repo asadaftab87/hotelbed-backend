@@ -2,20 +2,21 @@
 
 export const sectionMappers: Record<string, (string | null)[]> = {
   // --- Hotel Master Information ---
+  // Format: hotelCode:category:destination:chain:market:ranking:noHotelFlag:country:accommodationType:lat:lon:name
+  // Note: accommodationType is often EMPTY in ZIP (field 8)
   HOTEL: [
-    "hotelCode",
-    "hotelCategory",
-    "destinationCode",
-    "chainCode",
-    "contractMarket",
-    "ranking",
-    "noHotelFlag",
-    "countryCode",
-    "accommodationType",
-    "accommodationCode",
-    "latitude",
-    "longitude",
-    "hotelName"
+    "hotelCode",         // 0
+    "hotelCategory",     // 1
+    "destinationCode",   // 2
+    "chainCode",         // 3
+    "contractMarket",    // 4
+    "ranking",           // 5
+    "noHotelFlag",       // 6
+    "countryCode",       // 7
+    "accommodationType", // 8 - Often empty!
+    "latitude",          // 9
+    "longitude",         // 10
+    "hotelName"          // 11
   ],
 
   // --- Board Master Information ---
@@ -81,15 +82,15 @@ export const sectionMappers: Record<string, (string | null)[]> = {
   ],
 
   // --- Restrictions (CNIN) - Original restriction data ---
+  // Format: startDate:endDate:roomCode:characteristic:rateCode:(tuples)
+  // Note: releaseDays & allotment are INSIDE tuples, not separate fields!
   CNIN: [
     "startDate",
     "endDate",
     "roomCode",
     "characteristic",
     "rateCode",
-    "releaseDays",
-    "allotment",
-    "inventoryTuples"
+    "inventoryTuples"  // Field 5 - contains all (releaseDays,allotment) tuples
   ],
 
   // --- Costs / Prices ---

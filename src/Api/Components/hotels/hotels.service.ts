@@ -103,12 +103,6 @@ export interface HotelStaticData {
     code: string;
     name?: string;
   }>;
-  landmarks: Array<{
-    id: string;
-    name: string;
-    type: string;
-    distance: number;
-  }>;
   photos?: string[]; // URLs (if available)
   rating?: number;
   contact?: {
@@ -121,37 +115,17 @@ export interface HotelStaticData {
 export class HotelsService {
   /**
    * Get hotel matrix (room details with pricing)
+   * NEW: Uses CheapestPricePerPerson for reliable data (same as GET ALL)
    */
   async getMatrix(request: MatrixRequest): Promise<MatrixResponse> {
     try {
-      // Get hotel info (try SearchIndex first, fallback to HotelMaster)
-      let hotel: any = null;
-      let hotelName = '';
+      // Get hotel info
+      const hotelMaster = await prisma.hotelMaster.findFirst({
+        where: { hotelCode: request.hotelId },
+      });
 
-      try {
-        hotel = await prisma.searchIndex.findFirst({
-          where: {
-            hotelCode: request.hotelId,
-          },
-        });
-        hotelName = hotel?.hotelName || '';
-      } catch (err) {
-        Logger.debug('SearchIndex not available, trying HotelMaster');
-      }
-
-      // Fallback to HotelMaster
-      if (!hotel) {
-        const hotelMaster = await prisma.hotelMaster.findFirst({
-          where: {
-            hotelCode: request.hotelId,
-          },
-        });
-
-        if (!hotelMaster) {
-          throw new Error('Hotel not found');
-        }
-
-        hotelName = hotelMaster.hotelName || '';
+      if (!hotelMaster) {
+        throw new Error('Hotel not found');
       }
 
       // Calculate checkout date
@@ -159,103 +133,97 @@ export class HotelsService {
       const checkOut = new Date(checkIn);
       checkOut.setDate(checkOut.getDate() + request.nights);
 
-      // Get all available room types for this hotel
-      let rooms: any[] = [];
-      
-      try {
-        rooms = await prisma.room.findMany({
-          where: {
-            // Find rooms via Contract
-            hotelBedId: {
-              not: undefined,
-            },
+      // Get prices from CheapestPricePerPerson for this hotel & nights
+      const prices = await prisma.cheapestPricePerPerson.findMany({
+        where: {
+          hotelCode: request.hotelId,
+          nights: request.nights,
+          startDate: {
+            gte: checkIn,
+            lte: checkOut,
           },
-          distinct: ['roomCode', 'characteristic'],
-          take: 50, // Reasonable limit
-        });
-      } catch (err) {
-        Logger.warn('Room table not available or empty');
-      }
+        },
+        orderBy: { pricePP: 'asc' },
+        take: 50,
+      }).catch(() => []);
 
-      // Get pricing and availability for each room
-      const roomMatrices: RoomMatrix[] = [];
+      // Get board types
+      const boardsData = await prisma.boardMaster.findMany({
+        select: {
+          boardCode: true,
+          boardType: true,
+          boardName: true,
+        },
+      }).catch(() => []);
+      const boardsMap = new Map(boardsData.map(b => [b.boardCode, b]));
 
-      // Only calculate pricing if we have inventory data
-      if (rooms.length > 0) {
-        for (const room of rooms) {
-          try {
-            // Calculate pricing for this room (wrapped in try-catch)
-            try {
-              const pricing = await pricingEngine.calculatePrice({
-                hotelCode: request.hotelId,
-                checkIn,
-                checkOut,
-                nights: request.nights,
-                occupancy: request.occupancy,
-                roomCode: room.roomCode || undefined,
-              });
+      // Get inventory for availability info
+      const inventoryData = await prisma.inventory.findMany({
+        where: {
+          hotelCode: request.hotelId,
+          calendarDate: {
+            gte: checkIn,
+            lte: checkOut,
+          },
+        },
+      }).catch(() => []);
 
-              if (!pricing.isAvailable) {
-                continue; // Skip unavailable rooms
-              }
-
-              // Get current allotment
-              let inventory = null;
-              try {
-                inventory = await prisma.inventory.findFirst({
-                  where: {
-                    hotelCode: request.hotelId,
-                    roomCode: room.roomCode,
-                    calendarDate: checkIn,
-                  },
-                });
-              } catch (err) {
-                // Inventory table not available
-              }
-
-              roomMatrices.push({
-                roomCode: room.roomCode || '',
-                roomName: room.roomCode || '',
-                characteristic: room.characteristic || '',
-                board: pricing.boardCode,
-                totalPrice: pricing.totalPrice,
-                pricePerPerson: pricing.pricePerPerson,
-                currency: pricing.currency,
-                nightlyBreakdown: pricing.nightlyBreakdown.map((night) => ({
-                  date: night.date.toISOString().split('T')[0],
-                  price: night.total,
-                })),
-                policies: pricing.policies,
-                restrictions: pricing.restrictions,
-                promotionApplied: pricing.appliedPromotions[0]
-                  ? {
-                      type: pricing.appliedPromotions[0].type,
-                      value: pricing.appliedPromotions[0].value,
-                      freeNights:
-                        pricing.appliedPromotions[0].type === 'free_nights'
-                          ? pricing.appliedPromotions[0].value
-                          : undefined,
-                    }
-                  : undefined,
-                combinabilityNote: this.getCombinabilityNote(pricing.appliedPromotions),
-                availability: {
-                  isAvailable: true,
-                  allotment: inventory?.allotment || undefined,
-                },
-              });
-            } catch (pricingError) {
-              Logger.warn(`Pricing calculation failed for room ${room.roomCode}, skipping`);
-            }
-          } catch (error) {
-            Logger.error(`Failed to get pricing for room ${room.roomCode}:`, error);
-          }
+      // Build room matrices from price data
+      const roomMatrices: RoomMatrix[] = prices.map(priceData => {
+        const boardData = boardsMap.get(priceData.boardCode || '');
+        
+        // Find inventory for this room
+        const roomInventory = inventoryData.filter(
+          inv => inv.roomCode === priceData.roomCode
+        );
+        
+        // Calculate nightly breakdown (simplified - same price per night)
+        const nightlyBreakdown = [];
+        const pricePerNight = priceData.pricePP ? parseFloat(priceData.pricePP as any) * 2 / request.nights : 0;
+        for (let i = 0; i < request.nights; i++) {
+          const night = new Date(checkIn);
+          night.setDate(night.getDate() + i);
+          nightlyBreakdown.push({
+            date: night.toISOString().split('T')[0],
+            price: pricePerNight,
+          });
         }
-      }
+
+        return {
+          roomCode: priceData.roomCode || 'UNKNOWN',
+          roomName: priceData.roomCode || 'Standard Room',
+          characteristic: '',
+          board: priceData.boardCode || 'RO',
+          totalPrice: priceData.pricePP ? parseFloat(priceData.pricePP as any) * 2 : 0,
+          pricePerPerson: priceData.pricePP ? parseFloat(priceData.pricePP as any) : 0,
+          currency: priceData.currency || 'EUR',
+          nightlyBreakdown,
+          policies: {
+            cancellation: [], // Simplified - would need CancellationFee table
+            prepayment: undefined,
+          },
+          restrictions: {
+            minNights: roomInventory[0]?.minNights || undefined,
+            maxNights: roomInventory[0]?.maxNights || undefined,
+            cta: roomInventory[0]?.cta || undefined,
+            ctd: roomInventory[0]?.ctd || undefined,
+            releaseDays: roomInventory[0]?.releaseDays || undefined,
+          },
+          promotionApplied: undefined, // Simplified
+          combinabilityNote: undefined,
+          availability: {
+            isAvailable: roomInventory.some(inv => !inv.stopSale && (inv.allotment || 0) > 0),
+            allotment: roomInventory.length > 0 
+              ? Math.round(roomInventory.reduce((sum, inv) => sum + (inv.allotment || 0), 0) / roomInventory.length)
+              : undefined,
+          },
+        };
+      });
 
       return {
         hotelId: request.hotelId,
         hotelCode: request.hotelId,
-        hotelName: hotelName,
+        hotelName: hotelMaster.hotelName || '',
         checkIn: request.checkIn,
         checkOut: checkOut.toISOString().split('T')[0],
         nights: request.nights,
@@ -294,7 +262,6 @@ export class HotelsService {
         // Try to get additional data (fallback if tables don't exist)
         let searchIndex = null;
         let amenities: any[] = [];
-        let landmarks: any[] = [];
 
         try {
           searchIndex = await prisma.searchIndex.findFirst({
@@ -314,19 +281,6 @@ export class HotelsService {
           });
         } catch (e) {
           Logger.debug('HotelAmenity table not available');
-        }
-
-        try {
-          landmarks = await prisma.hotelLandmark.findMany({
-            where: {
-              hotelCode: hotelId,
-            },
-            include: {
-              landmark: true,
-            },
-          });
-        } catch (e) {
-          Logger.debug('HotelLandmark table not available');
         }
 
         hotels.push({
@@ -351,12 +305,6 @@ export class HotelsService {
             code: a.amenityCode,
             name: a.amenityName || undefined,
           })),
-          landmarks: landmarks.map((l) => ({
-            id: l.landmarkId,
-            name: l.landmark.name,
-            type: l.landmark.type,
-            distance: l.distanceM,
-          })),
           photos: [], // Not in current schema
           rating: searchIndex?.rating || undefined,
           contact: {
@@ -371,6 +319,276 @@ export class HotelsService {
     } catch (error) {
       Logger.error('HotelsService.getStaticData error:', error);
       throw error;
+    }
+  }
+
+  /**
+   * Enrich hotels list with COMPLETE A-Z details
+   */
+  async enrichHotelsList(hotels: any[]): Promise<any[]> {
+    try {
+      const hotelCodes = hotels.map(h => h.hotelCode);
+      
+      if (hotelCodes.length === 0) return hotels;
+      
+      // Fetch ALL data in parallel for maximum performance
+      const [
+        allPrices,
+        hotelMasters,
+        inventoryData,
+        boardsData,
+        promotionsData,
+        contractsData,
+      ] = await Promise.all([
+        // 1. All price entries (different rooms, boards, dates)
+        prisma.cheapestPricePerPerson.findMany({
+          where: { hotelCode: { in: hotelCodes } },
+          orderBy: [{ hotelCode: 'asc' }, { pricePP: 'asc' }],
+          take: 5000,
+        }).catch(() => []),
+        
+        // 2. Hotel Master data (location, coordinates, etc.)
+        prisma.hotelMaster.findMany({
+          where: { hotelCode: { in: hotelCodes } },
+          select: {
+            hotelCode: true,
+            hotelName: true,
+            latitude: true,
+            longitude: true,
+            hotelCategory: true,
+            destinationCode: true,
+            countryCode: true,
+            accommodationType: true,
+            chainCode: true,
+            ranking: true,
+          },
+        }).catch(() => []),
+        
+        // 3. Inventory/Availability (kis din available hai)
+        prisma.inventory.findMany({
+          where: {
+            hotelCode: { in: hotelCodes },
+            calendarDate: {
+              gte: new Date(),
+              lte: new Date(Date.now() + 365 * 24 * 60 * 60 * 1000), // Next 1 year
+            },
+          },
+          select: {
+            hotelCode: true,
+            roomCode: true,
+            calendarDate: true,
+            allotment: true,
+            stopSale: true,
+            releaseDays: true,
+            minNights: true,
+            maxNights: true,
+            cta: true,
+            ctd: true,
+          },
+          orderBy: { calendarDate: 'asc' },
+          take: 10000,
+        }).catch(() => []),
+        
+        // 4. Board types
+        prisma.boardMaster.findMany({
+          select: {
+            boardCode: true,
+            boardType: true,
+            boardName: true,
+          },
+        }).catch(() => []),
+        
+        // 5. Active promotions
+        prisma.promotion.findMany({
+          where: {
+            isIncluded: true,
+            finalDate: { gte: new Date() },
+          },
+          select: {
+            code: true,
+            description: true,
+            initialDate: true,
+            finalDate: true,
+            applicationInitialDate: true,
+            applicationFinalDate: true,
+          },
+          take: 100,
+        }).catch(() => []),
+        
+        // 6. Contract data for additional info
+        prisma.contract.findMany({
+          where: { hotelCode: { in: hotelCodes } },
+          select: {
+            hotelCode: true,
+            contractName: true,
+            initialDate: true,
+            endDate: true,
+            currency: true,
+            baseBoard: true,
+            releaseDays: true,
+            minChildAge: true,
+            maxChildAge: true,
+          },
+          take: 1000,
+        }).catch(() => []),
+      ]);
+
+      // Create lookup maps
+      const pricesByHotel = new Map<string, any[]>();
+      const inventoryByHotel = new Map<string, any[]>();
+      const hotelMasterMap = new Map(hotelMasters.map(h => [h.hotelCode, h]));
+      const boardsMap = new Map(boardsData.map(b => [b.boardCode, b]));
+      const contractsByHotel = new Map<string, any[]>();
+
+      // Group data by hotel
+      for (const price of allPrices) {
+        if (!pricesByHotel.has(price.hotelCode)) {
+          pricesByHotel.set(price.hotelCode, []);
+        }
+        pricesByHotel.get(price.hotelCode)!.push(price);
+      }
+
+      for (const inv of inventoryData) {
+        if (!inv.hotelCode) continue;
+        if (!inventoryByHotel.has(inv.hotelCode)) {
+          inventoryByHotel.set(inv.hotelCode, []);
+        }
+        inventoryByHotel.get(inv.hotelCode)!.push(inv);
+      }
+
+      for (const contract of contractsData) {
+        if (!contract.hotelCode) continue;
+        if (!contractsByHotel.has(contract.hotelCode)) {
+          contractsByHotel.set(contract.hotelCode, []);
+        }
+        contractsByHotel.get(contract.hotelCode)!.push(contract);
+      }
+
+      // Enrich each hotel with COMPLETE details
+      const enriched = await Promise.all(hotels.map(async (hotel) => {
+        const hotelCode = hotel.hotelCode;
+        const hotelMaster = hotelMasterMap.get(hotelCode);
+        const hotelPrices = pricesByHotel.get(hotelCode) || [];
+        const hotelInventory = inventoryByHotel.get(hotelCode) || [];
+        const hotelContracts = contractsByHotel.get(hotelCode) || [];
+
+        // Build location info
+        const location = {
+          latitude: hotelMaster?.latitude ? parseFloat(hotelMaster.latitude as any) : null,
+          longitude: hotelMaster?.longitude ? parseFloat(hotelMaster.longitude as any) : null,
+          destinationCode: hotelMaster?.destinationCode || hotel.destinationCode,
+          countryCode: hotelMaster?.countryCode || hotel.countryCode,
+        };
+
+        // Build hotel info
+        const hotelInfo = {
+          hotelName: hotelMaster?.hotelName || hotel.hotelName,
+          hotelCategory: hotelMaster?.hotelCategory || null,
+          accommodationType: hotelMaster?.accommodationType || hotel.accommodationType,
+          chainCode: hotelMaster?.chainCode || null,
+          ranking: hotelMaster?.ranking || null,
+        };
+
+        // Build availability calendar (kis din available hai)
+        const availabilityCalendar = hotelInventory.map(inv => ({
+          date: inv.calendarDate?.toISOString().split('T')[0],
+          roomCode: inv.roomCode,
+          available: !inv.stopSale && (inv.allotment || 0) > 0,
+          allotment: inv.allotment || 0,
+          minNights: inv.minNights,
+          maxNights: inv.maxNights,
+          releaseDays: inv.releaseDays,
+          closeToArrival: inv.cta,
+          closeToDeparture: inv.ctd,
+        }));
+
+        // Build room options with complete details
+        const rooms = hotelPrices.slice(0, 30).map(priceData => {
+          const boardData = boardsMap.get(priceData.boardCode || '');
+          
+          // Calculate end date
+          const startDate = new Date(priceData.startDate);
+          const endDate = new Date(startDate);
+          endDate.setDate(endDate.getDate() + priceData.nights);
+          
+          // Find matching inventory for this room
+          const roomInventory = hotelInventory.filter(
+            inv => inv.roomCode === priceData.roomCode
+          );
+          
+          return {
+            roomCode: priceData.roomCode,
+            pricing: {
+              pricePerPerson: priceData.pricePP ? parseFloat(priceData.pricePP as any) : null,
+              totalPrice: priceData.pricePP ? parseFloat(priceData.pricePP as any) * 2 : null,
+              currency: priceData.currency || 'EUR',
+              nights: priceData.nights,
+              adults: 2,
+              children: 0,
+            },
+            boardType: {
+              code: priceData.boardCode,
+              name: boardData?.boardName || priceData.boardCode,
+              type: boardData?.boardType || null,
+            },
+            dateRange: {
+              startDate: priceData.startDate?.toISOString().split('T')[0],
+              endDate: endDate.toISOString().split('T')[0],
+            },
+            availability: {
+              totalDays: roomInventory.length,
+              hasAvailability: roomInventory.some(inv => !inv.stopSale && (inv.allotment || 0) > 0),
+              avgAllotment: roomInventory.length > 0 
+                ? Math.round(roomInventory.reduce((sum, inv) => sum + (inv.allotment || 0), 0) / roomInventory.length)
+                : 0,
+            },
+            categoryTag: priceData.categoryTag,
+            ratePlanId: priceData.ratePlanId,
+            contractId: priceData.contractId,
+          };
+        });
+
+        // Contract info
+        const contracts = hotelContracts.slice(0, 5).map(c => ({
+          name: c.contractName,
+          validFrom: c.initialDate?.toISOString().split('T')[0],
+          validTo: c.endDate?.toISOString().split('T')[0],
+          currency: c.currency,
+          baseBoard: c.baseBoard,
+          releaseDays: c.releaseDays,
+          childAgeRange: {
+            min: c.minChildAge,
+            max: c.maxChildAge,
+          },
+        }));
+
+        return {
+          ...hotel,
+          ...hotelInfo,
+          location,
+          rooms,
+          totalRoomOptions: hotelPrices.length,
+          availabilityCalendar: availabilityCalendar.slice(0, 90), // Next 90 days
+          totalAvailableDays: availabilityCalendar.filter(a => a.available).length,
+          contracts,
+          promotions: promotionsData.slice(0, 5).map(p => ({
+            code: p.code,
+            description: p.description,
+            validFrom: p.initialDate?.toISOString().split('T')[0],
+            validTo: p.finalDate?.toISOString().split('T')[0],
+            bookingPeriod: {
+              from: p.applicationInitialDate?.toISOString().split('T')[0],
+              to: p.applicationFinalDate?.toISOString().split('T')[0],
+            },
+          })),
+        };
+      }));
+
+      return enriched;
+    } catch (error) {
+      Logger.error('Error enriching hotels list:', error);
+      // Return original hotels if enrichment fails
+      return hotels;
     }
   }
 

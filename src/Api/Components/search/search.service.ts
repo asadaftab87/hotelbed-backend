@@ -45,7 +45,6 @@ export interface SearchFilters {
   kidsFacilities?: boolean;
 
   // Location filters
-  landmarkId?: string[];
   beachDistanceMax?: number; // meters
   centerDistanceMax?: number; // meters
 

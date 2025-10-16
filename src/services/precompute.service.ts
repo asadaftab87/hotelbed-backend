@@ -39,9 +39,9 @@ export class PrecomputeService {
     
     // Create MySQL connection pool for raw queries (FAST!)
     this.pool = mysql.createPool({
-      host: process.env.DB_HOST || '107.21.156.43',
+      host: process.env.DB_HOST || 'hotelbed.c2hokug86b13.us-east-1.rds.amazonaws.com',
       user: process.env.DB_USER || 'asadaftab',
-      password: process.env.DB_PASSWORD || 'Asad124@',
+      password: process.env.DB_PASSWORD || 'Asad12345$',
       database: process.env.DB_NAME || 'hotelbed',
       waitForConnections: true,
       connectionLimit: this.config.concurrency * 2,

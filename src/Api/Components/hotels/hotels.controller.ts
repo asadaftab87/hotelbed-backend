@@ -38,9 +38,12 @@ export class HotelsController {
                 hotelCode: true,
                 hotelName: true,
                 minPricePP: true,
+                maxPricePP: true,
+                avgPricePP: true,
                 rating: true,
                 countryCode: true,
                 destinationCode: true,
+                accommodationType: true,
                 hasPromotion: true,
               },
               orderBy: {
@@ -63,6 +66,8 @@ export class HotelsController {
           hotels = rawHotels.map(h => ({
             ...h,
             minPricePP: h.minPricePP ? parseFloat(h.minPricePP as any) : null,
+            maxPricePP: h.maxPricePP ? parseFloat(h.maxPricePP as any) : null,
+            avgPricePP: h.avgPricePP ? parseFloat(h.avgPricePP as any) : null,
             rating: h.rating ? parseFloat(h.rating as any) : null,
           }));
           total = totalCount;
@@ -77,6 +82,7 @@ export class HotelsController {
                 countryCode: true,
                 destinationCode: true,
                 hotelCategory: true,
+                accommodationType: true,
               },
               distinct: ['hotelCode'],
               skip,
@@ -89,25 +95,28 @@ export class HotelsController {
             hotelCode: h.hotelCode,
             hotelName: h.hotelName,
             minPricePP: null,
+            maxPricePP: null,
+            avgPricePP: null,
             rating: null,
             countryCode: h.countryCode,
             destinationCode: h.destinationCode,
+            accommodationType: h.accommodationType,
             hasPromotion: false,
           }));
           total = hotelMasterTotal;
         }
 
+        // Enrich hotels with complete details (rooms, availability, costs)
+        const enrichedHotels = await hotelsService.enrichHotelsList(hotels);
+
         const duration = Date.now() - startTime;
         res.setHeader('X-Response-Time', `${duration}ms`);
 
         new SuccessResponse('Hotels retrieved', {
-          hotels,
+          hotels: enrichedHotels,
           total,
           page,
           pageSize,
-          note: hotels.length > 0 && !hotels[0].minPricePP 
-            ? 'Using HotelMaster data. Run precompute job to get prices from SearchIndex.'
-            : undefined,
         }).send(res);
       } catch (error) {
         Logger.error('Error in getList:', error);

@@ -10,27 +10,47 @@ import { bulkInsertRaw } from "../../../utils/bulkInsertRaw";
 import ProgressBar from "progress"; 3
 import ora from "ora";
 const BASE_URL = "https://aif2.hotelbeds.com/aif2-pub-ws/files";
-const BATCH_SIZE = 2000;
-const CONCURRENCY = 5;
+
+// 🚀 RDS-OPTIMIZED: Larger batches = fewer network round trips!
+const BATCH_SIZE = 5000;        // Increased for RDS (was 2000)
+const INSERT_BATCH = 30000;     // Max batch for inserts (reduce round trips)
+const CONCURRENCY = 8;          // Increased parallelism (RDS can handle more)
 
 
-// 🎯 BALANCED POOL: Optimized for sustained performance
+// 🚀 RDS-OPTIMIZED POOL: Network-aware configuration
+// EC2 <-> RDS requires optimizations for network latency
 const pool = mysql.createPool({
-  host: "107.21.156.43",
-  user: "asadaftab",
-  password: "Asad124@",
-  database: "hotelbed",
+  host: process.env.DB_HOST || "hotelbed.c2hokug86b13.us-east-1.rds.amazonaws.com", // RDS endpoint
+  user: process.env.DB_USER || "asadaftab",
+  password: process.env.DB_PASSWORD || "Asad12345$",
+  database: process.env.DB_NAME || "hotelbed",
+  port: parseInt(process.env.DB_PORT || "3306"),
+  
+  // 🚀 RDS Optimizations
   waitForConnections: true,
-  connectionLimit: 100, // 🎯 BALANCED for 100 concurrent files (1 HOUR TARGET!)
+  connectionLimit: 150, // Increased for RDS (better connection reuse)
   queueLimit: 0,
+  
+  // Keep-alive critical for RDS network stability
   enableKeepAlive: true,
-  keepAliveInitialDelay: 0,
+  keepAliveInitialDelay: 10000, // 10s keep-alive for RDS
+  
+  // Multiple statements for batch efficiency
   multipleStatements: true,
+  
+  // Data handling
   dateStrings: true,
   supportBigNumbers: true,
   bigNumberStrings: true,
-  connectTimeout: 60000,
+  
+  // Network timeouts (RDS needs higher values)
+  connectTimeout: 120000, // 2 min (RDS can be slower)
+  
+  // Charset
   charset: 'utf8mb4_unicode_ci',
+  
+  // SSL for RDS (if needed)
+  // ssl: { rejectUnauthorized: false }
 });
 
 
@@ -444,10 +464,16 @@ export default class HotelBedFileRepo {
     const totalFiles = allFiles.length;
     const globalInsertResults: Record<string, number> = {};
     
-    // ⚡ ULTRA-FAST MySQL performance tuning
-    await pool.query('SET foreign_key_checks = 0');
-    await pool.query('SET unique_checks = 0');
-    await pool.query('SET sql_log_bin = 0');
+    // ⚡ ULTRA-FAST MySQL performance tuning (RDS-OPTIMIZED!)
+    await pool.query('SET SESSION foreign_key_checks = 0');
+    await pool.query('SET SESSION unique_checks = 0');
+    await pool.query('SET SESSION autocommit = 1');
+    await pool.query('SET SESSION sql_log_bin = 0'); // If RDS allows
+    
+    // RDS Network optimizations
+    await pool.query('SET SESSION max_allowed_packet = 1073741824'); // 1GB for large batches
+    await pool.query('SET SESSION net_write_timeout = 600'); // 10 min for slow network
+    await pool.query('SET SESSION net_read_timeout = 600');  // 10 min
     
     console.log(`\n🎯 SWEET SPOT MODE: Sustained high performance!`);
     console.log(`⚡ HAND-TO-HAND: File → Parse → Insert → Next (INSTANT flow!)`);
@@ -494,8 +520,7 @@ export default class HotelBedFileRepo {
               mapped[j].hotelBedId = fileId;
             }
             
-            // Insert immediately (ABSOLUTE MAXIMUM batches!)
-            const INSERT_BATCH = 20000; // 🔥 ABSOLUTE MAX batch size!
+            // Insert immediately (RDS-OPTIMIZED: Large batches reduce network round trips!)
             for (let i = 0; i < mapped.length; i += INSERT_BATCH) {
               const chunk = mapped.slice(i, i + INSERT_BATCH);
               await bulkInsertRaw(tableName, chunk, pool, { onDuplicate: mode === "update" });
@@ -518,11 +543,11 @@ export default class HotelBedFileRepo {
     const processTime = ((Date.now() - processStart) / 1000 / 60).toFixed(1);
     spinner.succeed(`✅ Processed ${totalProcessed} files in ${processTime} minutes!`);
     
-    // Re-enable MySQL settings
+    // Re-enable MySQL settings (SESSION scope)
     spinner.start('💾 Finalizing...');
-    await pool.query('SET foreign_key_checks = 1');
-    await pool.query('SET unique_checks = 1');
-    await pool.query('SET sql_log_bin = 1');
+    await pool.query('SET SESSION foreign_key_checks = 1');
+    await pool.query('SET SESSION unique_checks = 1');
+    await pool.query('SET SESSION sql_log_bin = 1');
     spinner.succeed(`✅ All data committed!`);
 
     // 🏗️ Build Inventory table from Restriction + other tables
@@ -628,7 +653,7 @@ export default class HotelBedFileRepo {
 
     console.log(`   📊 Loading ${lines.length.toLocaleString()} hotels...`);
 
-    const BATCH_SIZE = 4000;
+    const HOTEL_BATCH = 10000; // RDS: Larger batches for fewer network calls
     let inserted = 0;
     let batch: any[] = [];
 
@@ -656,7 +681,7 @@ export default class HotelBedFileRepo {
           hotelName || null,
         ]);
 
-        if (batch.length >= BATCH_SIZE) {
+        if (batch.length >= HOTEL_BATCH) {
           await this.bulkInsertHotelMaster(batch);
           inserted += batch.length;
           process.stdout.write(`\r   ⚡ Inserted: ${inserted.toLocaleString()} hotels  `);
@@ -692,7 +717,7 @@ export default class HotelBedFileRepo {
 
     console.log(`   📊 Loading ${lines.length.toLocaleString()} boards...`);
 
-    const BATCH_SIZE = 10000;
+    const BOARD_BATCH = 10000; // RDS: Larger batches
     let inserted = 0;
     let batch: any[] = [];
 
@@ -708,7 +733,7 @@ export default class HotelBedFileRepo {
           fields[2] || null,
         ]);
 
-        if (batch.length >= BATCH_SIZE) {
+        if (batch.length >= BOARD_BATCH) {
           await this.bulkInsertBoardMaster(batch);
           inserted += batch.length;
           batch = [];
@@ -818,7 +843,7 @@ export default class HotelBedFileRepo {
       });
     }
 
-    const INV_BATCH = 5000;
+    const INV_BATCH = 15000; // RDS: Increased for fewer network round trips
     for (let i = 0; i < inventoryRows.length; i += INV_BATCH) {
       const chunk = inventoryRows.slice(i, i + INV_BATCH);
       await bulkInsertRaw("Inventory", chunk, pool, { onDuplicate: true });
@@ -955,7 +980,7 @@ export default class HotelBedFileRepo {
     console.log(`   📦 Total inventory rows to insert: ${inventoryRows.length}`);
 
     // Bulk insert inventory
-    const INV_BATCH = 5000;
+    const INV_BATCH = 15000; // RDS: Increased for fewer network round trips
     for (let i = 0; i < inventoryRows.length; i += INV_BATCH) {
       const chunk = inventoryRows.slice(i, i + INV_BATCH);
       await bulkInsertRaw("Inventory", chunk, pool, { onDuplicate: true });

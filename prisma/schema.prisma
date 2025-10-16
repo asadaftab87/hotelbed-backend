@@ -134,7 +134,7 @@ model Restriction {
   rateCode        String?
   releaseDays     Int?
   allotment       Int?
-  inventoryTuples String?
+  inventoryTuples String?  @db.Text
 }
 
 /// Inventory Management (Derived from CNIN for client requirement)
@@ -614,34 +614,6 @@ model HotelAmenity {
   @@index([amenityCode])
 }
 
-/// Landmarks for distance filtering
-model Landmark {
-  id          String   @id @default(uuid())
-  name        String
-  type        String   // e.g., "AIRPORT", "BEACH", "MUSEUM", "STATION"
-  latitude    Float
-  longitude   Float
-  city        String?
-  countryCode String?
-  
-  hotelLandmarks HotelLandmark[]
-  
-  @@index([type, countryCode])
-}
-
-/// Hotel to Landmark distances
-model HotelLandmark {
-  id          String    @id @default(uuid())
-  hotelCode   String
-  landmarkId  String
-  landmark    Landmark  @relation(fields: [landmarkId], references: [id])
-  distanceM   Int       // Distance in meters
-  
-  @@unique([hotelCode, landmarkId])
-  @@index([hotelCode])
-  @@index([landmarkId])
-}
-
 /// Foreign Exchange Rates for multi-currency support
 model FxRate {
   id           String   @id @default(uuid())
@@ -673,22 +645,6 @@ model StagingIngest {
   @@index([batchId, section])
   @@index([processed])
   @@index([ingestedAt])
-}
-
-/// Ingest job tracking for monitoring
-model IngestJob {
-  id              String   @id @default(uuid())
-  batchId         String   @unique
-  mode            String   // "full" or "update"
-  status          String   // "pending", "running", "completed", "failed"
-  startedAt       DateTime @default(now())
-  completedAt     DateTime?
-  error           String?  @db.Text
-  recordsIngested Int      @default(0)
-  recordsUpdated  Int      @default(0)
-  duration        Int?     // Duration in seconds
-  
-  @@index([status, startedAt])
 }
 
 // ============================================================================

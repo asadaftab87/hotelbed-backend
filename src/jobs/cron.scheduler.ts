@@ -1,8 +1,7 @@
 /**
  * Cron Scheduler
  * Schedules recurring jobs per client requirements:
- * - Data ingestion (every 60 min or configurable)
- * - Precompute (after ingest or hourly)
+ * - Precompute (hourly or configurable)
  * - Cleanup (daily)
  */
 
@@ -21,10 +20,6 @@ class CronScheduler {
   initialize(): void {
     Logger.info('🔄 Initializing cron scheduler...');
 
-    // Data ingestion job
-    const syncInterval = parseInt(process.env.SYNC_INTERVAL_MIN || '60');
-    this.scheduleIngestJob(syncInterval);
-
     // Precompute job
     const precomputeInterval = parseInt(process.env.PRECOMPUTE_INTERVAL_MIN || '60');
     this.schedulePrecomputeJob(precomputeInterval);
@@ -33,33 +28,6 @@ class CronScheduler {
     this.scheduleCleanupJob();
 
     Logger.info(`✅ Cron scheduler initialized with ${this.jobs.length} jobs`);
-  }
-
-  /**
-   * Schedule data ingestion job
-   */
-  private scheduleIngestJob(intervalMinutes: number): void {
-    // Convert minutes to cron expression
-    const cronExpression = this.minutesToCron(intervalMinutes);
-
-    const job = cron.schedule(cronExpression, async () => {
-      Logger.info('⏰ Running scheduled ingest job...');
-      
-      try {
-        const batchId = randomUUID();
-        await queueManager.addIngestJob({
-          mode: 'update', // Use 'update' mode for scheduled syncs
-          batchId,
-        });
-
-        Logger.info(`✅ Ingest job queued with batchId: ${batchId}`);
-      } catch (error) {
-        Logger.error('❌ Failed to queue ingest job:', error);
-      }
-    });
-
-    this.jobs.push(job);
-    Logger.info(`📅 Ingest job scheduled: every ${intervalMinutes} minutes`);
   }
 
   /**
@@ -97,12 +65,6 @@ class CronScheduler {
         // Cleanup expired cheapest prices
         const deleted = await precomputeService.cleanupExpired();
         Logger.info(`✅ Cleanup completed: ${deleted} records deleted`);
-
-        // Cleanup old staging data (if implemented)
-        // await cleanupStagingData();
-
-        // Cleanup old ingest jobs
-        // await cleanupIngestJobs();
 
       } catch (error) {
         Logger.error('❌ Cleanup job failed:', error);

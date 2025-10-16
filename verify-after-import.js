@@ -3,9 +3,9 @@ const mysql = require('mysql2/promise');
 (async () => {
   try {
     const conn = await mysql.createConnection({
-      host: '107.21.156.43',
+      host: 'hotelbed.c2hokug86b13.us-east-1.rds.amazonaws.com',
       user: 'asadaftab',
-      password: 'Asad124@',
+      password: 'Asad12345$',
       database: 'hotelbed'
     });
 

@@ -1,7 +1,6 @@
 /**
  * Queue Manager using BullMQ
  * Handles async job processing for:
- * - Data ingestion (sync)
  * - Precompute jobs
  * - Cache invalidation
  */
@@ -21,11 +20,6 @@ interface QueueConfig {
   concurrency: number;
 }
 
-export interface IngestJobData {
-  mode: 'full' | 'update';
-  batchId: string;
-}
-
 export interface PrecomputeJobData {
   type: 'full' | 'hotel';
   hotelCode?: string;
@@ -37,7 +31,6 @@ export interface CacheInvalidationJobData {
 
 class QueueManager {
   private connection: Redis | null = null;
-  private ingestQueue: Queue | null = null;
   private precomputeQueue: Queue | null = null;
   private cacheQueue: Queue | null = null;
   private workers: Worker[] = [];
@@ -76,7 +69,6 @@ class QueueManager {
       });
 
       // Initialize queues
-      this.ingestQueue = new Queue('ingest', { connection: this.connection });
       this.precomputeQueue = new Queue('precompute', { connection: this.connection });
       this.cacheQueue = new Queue('cache', { connection: this.connection });
 
@@ -97,28 +89,6 @@ class QueueManager {
    * Initialize workers for each queue
    */
   private initializeWorkers(): void {
-    // Ingest worker
-    const ingestWorker = new Worker(
-      'ingest',
-      async (job: Job<IngestJobData>) => {
-        Logger.info(`Processing ingest job ${job.id}:`, job.data);
-        const result = await HotelBedFileRepo.createFromZip(job.data.mode);
-        return result;
-      },
-      {
-        connection: this.connection!,
-        concurrency: 1, // Only one ingest at a time to avoid conflicts
-      }
-    );
-
-    ingestWorker.on('completed', (job) => {
-      Logger.info(`✅ Ingest job ${job.id} completed`);
-    });
-
-    ingestWorker.on('failed', (job, err) => {
-      Logger.error(`❌ Ingest job ${job?.id} failed:`, err);
-    });
-
     // Precompute worker
     const precomputeWorker = new Worker(
       'precompute',
@@ -164,43 +134,19 @@ class QueueManager {
       }
     );
 
-    this.workers = [ingestWorker, precomputeWorker, cacheWorker];
+    this.workers = [precomputeWorker, cacheWorker];
   }
 
   /**
    * Initialize queue events for monitoring
    */
   private initializeQueueEvents(): void {
-    const ingestEvents = new QueueEvents('ingest', { connection: this.connection! });
     const precomputeEvents = new QueueEvents('precompute', { connection: this.connection! });
     const cacheEvents = new QueueEvents('cache', { connection: this.connection! });
 
-    this.queueEvents = [ingestEvents, precomputeEvents, cacheEvents];
-
-    // You can add event listeners here for monitoring
-    ingestEvents.on('completed', ({ jobId }) => {
-      Logger.debug(`Ingest job ${jobId} completed event`);
-    });
+    this.queueEvents = [precomputeEvents, cacheEvents];
   }
 
-  /**
-   * Add ingest job to queue
-   */
-  async addIngestJob(data: IngestJobData): Promise<Job> {
-    if (!this.ingestQueue) {
-      throw new Error('Queue system not initialized');
-    }
-
-    return await this.ingestQueue.add('sync', data, {
-      attempts: 3,
-      backoff: {
-        type: 'exponential',
-        delay: 10000, // 10 seconds
-      },
-      removeOnComplete: 10, // Keep last 10 completed jobs
-      removeOnFail: 50, // Keep last 50 failed jobs
-    });
-  }
 
   /**
    * Add precompute job to queue
@@ -239,18 +185,16 @@ class QueueManager {
    * Get queue statistics
    */
   async getStats(): Promise<any> {
-    if (!this.ingestQueue || !this.precomputeQueue || !this.cacheQueue) {
+    if (!this.precomputeQueue || !this.cacheQueue) {
       return null;
     }
 
-    const [ingestCounts, precomputeCounts, cacheCounts] = await Promise.all([
-      this.ingestQueue.getJobCounts(),
+    const [precomputeCounts, cacheCounts] = await Promise.all([
       this.precomputeQueue.getJobCounts(),
       this.cacheQueue.getJobCounts(),
     ]);
 
     return {
-      ingest: ingestCounts,
       precompute: precomputeCounts,
       cache: cacheCounts,
     };
@@ -269,7 +213,6 @@ class QueueManager {
     await Promise.all(this.queueEvents.map((events) => events.close()));
 
     // Close queues
-    if (this.ingestQueue) await this.ingestQueue.close();
     if (this.precomputeQueue) await this.precomputeQueue.close();
     if (this.cacheQueue) await this.cacheQueue.close();
 

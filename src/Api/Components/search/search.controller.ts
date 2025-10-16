@@ -71,11 +71,6 @@ export class SearchController {
         kidsFacilities: req.query.kidsFacilities === 'true',
 
         // Location filters
-        landmarkId: req.query.landmarkId
-          ? Array.isArray(req.query.landmarkId)
-            ? (req.query.landmarkId as string[])
-            : [req.query.landmarkId as string]
-          : undefined,
         beachDistanceMax: req.query.beachDistanceMax
           ? parseInt(req.query.beachDistanceMax as string)
           : undefined,
