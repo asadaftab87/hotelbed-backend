@@ -14,14 +14,14 @@ const BATCH_SIZE = 2000;
 const CONCURRENCY = 5;
 
 
-// ✅ SEQUENTIAL POOL: Optimized for one-at-a-time inserts
+// ⚡ INDEPENDENT FILE POOL: 30 files concurrent processing
 const pool = mysql.createPool({
   host: "107.21.156.43",
   user: "asadaftab",
   password: "Asad124@",
   database: "hotelbed",
   waitForConnections: true,
-  connectionLimit: 20, // ✅ Sequential inserts need fewer connections
+  connectionLimit: 40, // ⚡ Enough for 30 concurrent files + buffer
   queueLimit: 0,
   enableKeepAlive: true,
   keepAliveInitialDelay: 0,
@@ -438,121 +438,89 @@ export default class HotelBedFileRepo {
     const allFiles = await this.getAllFilePaths(dir, ['GENERAL']);
     spinner.succeed(`✅ Found ${allFiles.length} CONTRACT files to process`);
 
-    // ✅ STABLE STREAMING: Sequential inserts = No locks!
-    // 🎯 Optimized for 32GB RAM with no database conflicts
-    const MICRO_BATCH = 1200; // 🎯 Larger batches (sequential is fast!)
-    const PARSE_CONCURRENCY = 120; // 🎯 Max parsing power
+    // ⚡ INDEPENDENT FILE PROCESSING: Har file apna data khud insert kare!
+    // 🔥 NO AGGREGATION: Files independent process ho, but 30 parallel for speed
+    const FILE_CONCURRENCY = 30; // 🎯 30 files parallel (but independent!)
     const totalFiles = allFiles.length;
-    let totalProcessed = 0;
     const globalInsertResults: Record<string, number> = {};
     
-    // ⚡ ULTRA-FAST MySQL performance tuning (SUPER privilege enabled!)
+    // ⚡ ULTRA-FAST MySQL performance tuning
     await pool.query('SET foreign_key_checks = 0');
     await pool.query('SET unique_checks = 0');
-    await pool.query('SET autocommit = 0');
-    await pool.query('SET sql_log_bin = 0'); // 🚀 Disable binary logging - 20-30% faster!
-    // Note: innodb_flush_log_at_trx_commit is GLOBAL only (too risky to change server-wide)
+    await pool.query('SET sql_log_bin = 0');
     
-    console.log(`\n✅ STABLE STREAMING: Sequential inserts = ZERO lock conflicts!`);
-    console.log(`⚡ ${MICRO_BATCH} files per batch | One table at a time | No parallel conflicts!`);
-    spinner.start(`⚡ STREAMING ${totalFiles} files...`);
+    console.log(`\n✅ INDEPENDENT FILE PROCESSING: Har file apna data khud insert!`);
+    console.log(`🔥 NO AGGREGATION: Koi batch nahi, koi wait nahi!`);
+    console.log(`⚡ ${FILE_CONCURRENCY} files process ho rahe hain (independent of each other)`);
+    console.log(`📊 Progress: Every 30 seconds | Expected: ~40-50 minutes`);
+    spinner.start(`⚡ Processing ${totalFiles} files independently...`);
     const processStart = Date.now();
     
-    for (let streamIdx = 0; streamIdx < totalFiles; streamIdx += MICRO_BATCH) {
-      const batchNum = Math.floor(streamIdx/MICRO_BATCH) + 1;
-      const totalBatches = Math.ceil(totalFiles/MICRO_BATCH);
-      const batchStart = Date.now();
-      const streamBatch = allFiles.slice(streamIdx, streamIdx + MICRO_BATCH);
-      
-      // ⚡ Parse instantly (no progress tracking for speed)
-      const limit = pLimit(PARSE_CONCURRENCY);
-      
-      const parsedData = await Promise.all(
-        streamBatch.map((filePath) => limit(async () => {
-          try {
-            const sections = await this.parseFileToJson(filePath);
-            return {
-              fileId: randomUUID(),
-              fileName: path.basename(filePath),
-              sections
-            };
-          } catch (error: any) {
-            return null;
-          }
-        }))
-      );
-      
-      const validParsedData = parsedData.filter(Boolean) as any[];
-      
-      // ⚡ Instant aggregation - no delays!
-      const batchAggregated: Record<string, any[]> = {};
-      const fileRecords: any[] = [];
-      const createdAt = new Date().toISOString().slice(0, 19).replace('T', ' ');
-      
-      for (let i = 0; i < validParsedData.length; i++) {
-        const { fileId, fileName, sections } = validParsedData[i];
-        fileRecords.push({ id: fileId, name: fileName, createdAt });
-        
-        for (const section in sections) {
-          const rows = sections[section];
-          if (!rows || rows.length === 0) continue;
-          if (!batchAggregated[section]) batchAggregated[section] = [];
-          
-          const mapped = mapRow(section, rows);
-          for (let j = 0; j < mapped.length; j++) {
-            mapped[j].hotelBedId = fileId;
-            batchAggregated[section].push(mapped[j]);
-          }
-        }
-      }
-      
-      // Insert file records for this batch
-      if (fileRecords.length > 0) {
-        await bulkInsertRaw("HotelBedFile", fileRecords, pool, { onDuplicate: true });
-      }
-      
-      // ✅ SEQUENTIAL INSERTION: One table at a time - ZERO lock conflicts!
-      const INSERT_BATCH = 8000; // Large batches for speed
-      
-      for (const [section, rows] of Object.entries(batchAggregated)) {
-        const tableName = SECTION_TABLE_MAP[section];
-        if (!tableName || rows.length === 0) continue;
-        
+    // ⚡ Progress tracking
+    let totalProcessed = 0;
+    const progressInterval = setInterval(() => {
+      const pct = Math.round(totalProcessed/totalFiles*100);
+      const elapsed = ((Date.now() - processStart) / 1000 / 60).toFixed(1);
+      console.log(`⚡ Progress: ${totalProcessed}/${totalFiles} (${pct}%) | ${elapsed}min elapsed`);
+    }, 30000); // Every 30 seconds
+    
+    // 🔥 FILE-BY-FILE PROCESSING: Each file is processed independently!
+    const fileLimit = pLimit(FILE_CONCURRENCY);
+    await Promise.all(
+      allFiles.map((filePath, idx) => fileLimit(async () => {
         try {
-          for (let i = 0; i < rows.length; i += INSERT_BATCH) {
-            await bulkInsertRaw(tableName, rows.slice(i, i + INSERT_BATCH), pool, { onDuplicate: mode === "update" });
+          // 1️⃣ Parse file
+          const sections = await this.parseFileToJson(filePath);
+          const fileId = randomUUID();
+          const fileName = path.basename(filePath);
+          const createdAt = new Date().toISOString().slice(0, 19).replace('T', ' ');
+          
+          // 2️⃣ Insert file record
+          await bulkInsertRaw("HotelBedFile", [{ id: fileId, name: fileName, createdAt }], pool, { onDuplicate: true });
+          
+          // 3️⃣ Process and insert each section immediately
+          for (const section in sections) {
+            const rows = sections[section];
+            if (!rows || rows.length === 0) continue;
+            
+            const tableName = SECTION_TABLE_MAP[section];
+            if (!tableName) continue;
+            
+            // Map and add fileId
+            const mapped = mapRow(section, rows);
+            for (let j = 0; j < mapped.length; j++) {
+              mapped[j].hotelBedId = fileId;
+            }
+            
+            // Insert immediately in chunks
+            const INSERT_BATCH = 5000;
+            for (let i = 0; i < mapped.length; i += INSERT_BATCH) {
+              const chunk = mapped.slice(i, i + INSERT_BATCH);
+              await bulkInsertRaw(tableName, chunk, pool, { onDuplicate: mode === "update" });
+            }
+            
+            // Track results (with mutex for safety)
+            globalInsertResults[tableName] = (globalInsertResults[tableName] || 0) + mapped.length;
           }
-          globalInsertResults[tableName] = (globalInsertResults[tableName] || 0) + rows.length;
+          
+          totalProcessed++;
         } catch (error: any) {
-          console.error(`❌ ${tableName}: ${error.message}`);
+          console.error(`❌ Error processing file ${idx}: ${error.message}`);
+          totalProcessed++;
         }
-      }
-      
-      totalProcessed += validParsedData.length;
-      await pool.query('COMMIT');
-      await pool.query('START TRANSACTION');
-      
-      // Quick progress update every 10 batches
-      if (batchNum % 10 === 0 || batchNum === totalBatches) {
-        const elapsed = ((Date.now() - processStart) / 1000 / 60).toFixed(1);
-        const avgTimePerBatch = (Date.now() - processStart) / batchNum;
-        const etaMin = Math.round((avgTimePerBatch * (totalBatches - batchNum)) / 60000);
-        console.log(`⚡ Batch ${batchNum}/${totalBatches} | ${totalProcessed}/${totalFiles} (${Math.round(totalProcessed/totalFiles*100)}%) | ${elapsed}min elapsed | ETA: ${etaMin}min`);
-      }
-      
-      if (global.gc) global.gc();
-    }
+      }))
+    );
     
-    const processTime = ((Date.now() - processStart) / 1000).toFixed(1);
-    spinner.succeed(`✅ Processed ${totalProcessed} files in ${processTime}s`);
+    clearInterval(progressInterval);
     
-    // Re-enable checks and commit
-    spinner.start('💾 Committing transaction...');
-    await pool.query('COMMIT');
+    const processTime = ((Date.now() - processStart) / 1000 / 60).toFixed(1);
+    spinner.succeed(`✅ Processed ${totalProcessed} files in ${processTime} minutes!`);
+    
+    // Re-enable MySQL settings
+    spinner.start('💾 Finalizing...');
     await pool.query('SET foreign_key_checks = 1');
     await pool.query('SET unique_checks = 1');
-    await pool.query('SET autocommit = 1');
-    await pool.query('SET sql_log_bin = 1'); // 🔄 Re-enable binary logging
+    await pool.query('SET sql_log_bin = 1');
     spinner.succeed(`✅ All data committed!`);
 
     // 🏗️ Build Inventory table from Restriction + other tables
