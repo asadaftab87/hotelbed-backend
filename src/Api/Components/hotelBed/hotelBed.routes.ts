@@ -16,6 +16,12 @@ export class HotelBedRoutes {
       this.controller.getFullData
     )
 
+    // Manual inventory build (from current database data)
+    this.router.get(
+      '/build-inventory',
+      this.controller.buildInventory
+    )
+
     // Manual precompute only (after data is in DB)
     this.router.get(
       '/precompute',

@@ -826,10 +826,23 @@ export default class HotelBedFileRepo {
   }
 
   /**
+   * 🧹 Rebuild Inventory table - Clean old and build fresh
+   * Truncates Inventory table first, then builds from current database data
+   */
+  public static async rebuildInventory() {
+    console.log('🧹 Cleaning old Inventory table...');
+    await pool.query('TRUNCATE TABLE `Inventory`');
+    console.log('✅ Old inventory cleaned!');
+    
+    console.log('🏗️ Building fresh Inventory from current database data...');
+    await this.buildInventoryFromDatabase();
+  }
+
+  /**
    * 🏗️ Build Inventory table from database tables (Restriction, StopSale, MinMaxStay, Contract)
    * Uses data already in database instead of in-memory aggregation
    */
-  private static async buildInventoryFromDatabase() {
+  public static async buildInventoryFromDatabase() {
     console.log('📊 Fetching data from Restriction, StopSale, MinMaxStay, and Contract tables...');
     
     // Fetch all required data

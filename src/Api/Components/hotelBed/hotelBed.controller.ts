@@ -122,6 +122,31 @@ export class HotelBedFileController {
     }
   )
 
+  /**
+   * 🏗️ Manual Inventory Build
+   * Run this to build Inventory table from current database data
+   * Useful for partial data demos (e.g., at 18% completion)
+   * Cleans old inventory first, then builds fresh from current data
+   */
+  buildInventory = asyncHandler(
+    async (req: any, res: Response, next: NextFunction): Promise<Response | void> => {
+      const startTime = Date.now();
+      
+      // Clean old inventory and build fresh from current database data
+      await HotelBedFileRepo.rebuildInventory();
+      
+      const duration = ((Date.now() - startTime) / 1000).toFixed(2);
+      
+      new SuccessResponse(
+        "✅ Inventory table rebuilt successfully!",
+        { 
+          message: "Old inventory cleaned and rebuilt from current database data",
+          duration: `${duration}s` 
+        }
+      ).send(res);
+    }
+  )
+
   // delete = asyncHandler(
   //   async (req: Request, res: Response, next: NextFunction): Promise<Response | void> => {
   //     const { coupleId } = req.params
