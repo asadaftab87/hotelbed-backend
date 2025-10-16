@@ -201,7 +201,7 @@ export default class HotelBedFileRepo {
     for (let i = 0; i < lines.length; i++) {
       const rawLine = lines[i];
       if (!rawLine) continue;
-      
+
       const line = rawLine.trim();
       if (!line) continue;
 
@@ -210,7 +210,7 @@ export default class HotelBedFileRepo {
       // Fast check for section markers
       if (firstChar === "{") {
         if (line[1] === "/") {
-          currentSection = null;
+        currentSection = null;
           currentArray = null;
         } else {
           currentSection = line.slice(1, -1); // Faster than replace
@@ -225,8 +225,8 @@ export default class HotelBedFileRepo {
             currentArray.push(...parsedRows);
           }
         } else {
-          const parts = line.split(":");
-          const row: Record<string, string> = {};
+        const parts = line.split(":");
+        const row: Record<string, string> = {};
           for (let j = 0; j < parts.length; j++) {
             row[`field_${j}`] = parts[j];
           }
@@ -256,9 +256,20 @@ export default class HotelBedFileRepo {
     // Extract tuples (everything after field 6)
     const tuplesStr = parts.slice(7).join(":"); // Re-join in case there are colons inside
     
+    // 🔍 DEBUG: Log if no tuples found
+    if (!tuplesStr || tuplesStr.trim() === "") {
+      console.log(`⚠️  CNCT line has no tuples: ${line.substring(0, 100)}...`);
+      return [];
+    }
+    
     // Parse tuples: (N,0.000,0.000,0,RO,171.610)(N,0.000,0.000,0,RO,203.230)...
     const tupleRegex = /\(([^)]+)\)/g;
     const matches = [...tuplesStr.matchAll(tupleRegex)];
+    
+    if (matches.length === 0) {
+      console.log(`⚠️  No tuples matched in CNCT line. TuplesStr: ${tuplesStr.substring(0, 100)}`);
+      return [];
+    }
     
     const rows: any[] = [];
     
@@ -290,11 +301,6 @@ export default class HotelBedFileRepo {
         field_12: "",  // validFrom (not in tuple)
         field_13: ""   // validTo (not in tuple)
       });
-    }
-    
-    // Debug log
-    if (rows.length > 0) {
-      console.log(`🔍 CNCT parsed: ${rows.length} cost records from tuples`);
     }
     
     return rows;
@@ -482,16 +488,29 @@ export default class HotelBedFileRepo {
         for (const [section, rows] of Object.entries(sections as Record<string, any[]>)) {
           if (!rows || rows.length === 0) continue;
           
+          // 🔍 DEBUG: Log CNCT section specifically
+          if (section === "CNCT") {
+            console.log(`🔍 Found CNCT section in ${fileName}: ${rows.length} cost records BEFORE mapping`);
+          }
+          
           if (!batchAggregated[section]) {
             batchAggregated[section] = [];
           }
           
           const mappedRows = mapRow(section, rows).map((r: any) => ({
-            id: randomUUID(),
-            hotelBedId: fileId,
-            ...r,
-          }));
-          
+                id: randomUUID(),
+                hotelBedId: fileId,
+                ...r,
+              }));
+
+          // 🔍 DEBUG: Log CNCT section after mapping
+          if (section === "CNCT") {
+            console.log(`🔍 CNCT section in ${fileName}: ${mappedRows.length} cost records AFTER mapping`);
+            if (mappedRows.length > 0) {
+              console.log(`🔍 Sample mapped CNCT row:`, JSON.stringify(mappedRows[0]).substring(0, 300));
+            }
+          }
+
           batchAggregated[section].push(...mappedRows);
         }
       });
@@ -581,6 +600,18 @@ export default class HotelBedFileRepo {
     Object.entries(globalInsertResults).forEach(([table, count]) => {
       console.log(`   ${table}: ${count} records`);
     });
+    
+    // 🔍 Specific check for Cost table
+    const costCount = globalInsertResults['Cost'] || 0;
+    if (costCount === 0) {
+      console.log('\n⚠️  WARNING: No Cost records were inserted! This could mean:');
+      console.log('   1. CNCT sections are empty in the downloaded files');
+      console.log('   2. CNCT tuple parsing failed');
+      console.log('   3. Cost data insertion failed');
+      console.log('   Check the logs above for CNCT-related messages.');
+    } else {
+      console.log(`\n✅ Cost table populated successfully with ${costCount} records!`);
+    }
   }
 
   /**
@@ -963,9 +994,9 @@ export default class HotelBedFileRepo {
           minNights: minMax.minNights || null,
           maxNights: minMax.maxNights || null,
           createdAt: new Date().toISOString().slice(0, 19).replace('T', ' ')
-        });
-      }
-    }
+                });
+              }
+            }
 
     console.log(`   📦 Total inventory rows to insert: ${inventoryRows.length}`);
 
