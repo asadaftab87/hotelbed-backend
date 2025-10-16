@@ -440,10 +440,10 @@ export default class HotelBedFileRepo {
     const allFiles = await this.getAllFilePaths(dir, ['GENERAL']);
     spinner.succeed(`✅ Found ${allFiles.length} CONTRACT files to process`);
 
-    // 🚀 STREAMING APPROACH: Parse batches → Insert immediately → Clear memory  
-    // 💪 OPTIMIZED FOR r7a.xlarge (32GB RAM, 4 vCPUs)
-    const SUPER_BATCH = 6000; // 💪 Optimized for 32GB RAM
-    const PARSE_CONCURRENCY = 80; // 💪 Optimized for 4 vCPUs
+    // 🚀 FAST STREAMING: Optimized batch size for speed + stability
+    // ⚡ SWEET SPOT: Big enough for speed, small enough to avoid hanging
+    const STREAM_BATCH = 1500; // 🎯 Balanced for fast streaming
+    const PARSE_CONCURRENCY = 100; // 🎯 High concurrency for speed
     const totalFiles = allFiles.length;
     let totalProcessed = 0;
     const globalInsertResults: Record<string, number> = {};
@@ -455,26 +455,26 @@ export default class HotelBedFileRepo {
     await pool.query('SET sql_log_bin = 0'); // 🚀 Disable binary logging - 20-30% faster!
     // Note: innodb_flush_log_at_trx_commit is GLOBAL only (too risky to change server-wide)
     
-    console.log(`\n🚀 Starting streaming process: ${totalFiles} files in batches of ${SUPER_BATCH}...`);
-    spinner.start(`📖 Processing ${totalFiles} files in batches of ${SUPER_BATCH}...`);
+    console.log(`\n🚀 FAST STREAMING: ${totalFiles} files in batches of ${STREAM_BATCH}...`);
+    spinner.start(`🚀 Streaming ${totalFiles} files...`);
     const processStart = Date.now();
     
-    for (let superIdx = 0; superIdx < totalFiles; superIdx += SUPER_BATCH) {
-      const batchNum = Math.floor(superIdx/SUPER_BATCH) + 1;
-      const totalBatches = Math.ceil(totalFiles/SUPER_BATCH);
+    for (let streamIdx = 0; streamIdx < totalFiles; streamIdx += STREAM_BATCH) {
+      const batchNum = Math.floor(streamIdx/STREAM_BATCH) + 1;
+      const totalBatches = Math.ceil(totalFiles/STREAM_BATCH);
       const batchStart = Date.now();
-      console.log(`\n🔄 Batch ${batchNum}/${totalBatches} starting...`);
-      const superBatch = allFiles.slice(superIdx, superIdx + SUPER_BATCH);
+      console.log(`\n⚡ Batch ${batchNum}/${totalBatches} (${STREAM_BATCH} files)...`);
+      const streamBatch = allFiles.slice(streamIdx, streamIdx + STREAM_BATCH);
       
       // 🎯 Parse with concurrency limit to prevent system overload
       const limit = pLimit(PARSE_CONCURRENCY);
       let parsedCount = 0;
       const progressInterval = setInterval(() => {
-        console.log(`   ⏳ Parsing... ${parsedCount}/${superBatch.length} files (${Math.round(parsedCount/superBatch.length*100)}%)`);
-      }, 5000); // Log every 5 seconds
+        console.log(`   ⏳ Parsing... ${parsedCount}/${streamBatch.length} files (${Math.round(parsedCount/streamBatch.length*100)}%)`);
+      }, 8000); // Log every 8 seconds
       
       const parsedData = await Promise.all(
-        superBatch.map((filePath) => limit(async () => {
+        streamBatch.map((filePath) => limit(async () => {
           try {
             const sections = await this.parseFileToJson(filePath);
             parsedCount++;
@@ -493,53 +493,36 @@ export default class HotelBedFileRepo {
       
       clearInterval(progressInterval);
       const parseTime = ((Date.now() - batchStart) / 1000).toFixed(1);
-      console.log(`   ✅ Parsed ${superBatch.length} files in ${parseTime}s`);
+      console.log(`   ✅ Parsed ${streamBatch.length} files in ${parseTime}s`);
       
       const validParsedData = parsedData.filter(Boolean) as any[];
       
-      // Aggregate this super-batch
-      console.log(`   🔄 Aggregating data from ${validParsedData.length} files...`);
+      // ⚡ INSTANT AGGREGATION: Small batches = no progress tracking needed
       const aggStart = Date.now();
       const batchAggregated: Record<string, any[]> = {};
       const fileRecords: any[] = [];
-      
-      // 🚀 OPTIMIZED: Process data in a single pass without intermediate arrays
       const createdAt = new Date().toISOString().slice(0, 19).replace('T', ' ');
-      const totalToAggregate = validParsedData.length;
-      let aggregated = 0;
       
-      const aggProgressInterval = setInterval(() => {
-        console.log(`      ⏳ Aggregating... ${aggregated}/${totalToAggregate} files (${Math.round(aggregated/totalToAggregate*100)}%)`);
-      }, 3000); // Every 3 seconds
-      
+      // 🚀 Single-pass processing
       for (let i = 0; i < validParsedData.length; i++) {
         const { fileId, fileName, sections } = validParsedData[i];
-        
-        // File record
         fileRecords.push({ id: fileId, name: fileName, createdAt });
         
-        // Process sections
         for (const section in sections) {
           const rows = sections[section];
           if (!rows || rows.length === 0) continue;
-          
           if (!batchAggregated[section]) batchAggregated[section] = [];
           
-          // 🚀 Single-pass mapping (no intermediate arrays!)
           const mapped = mapRow(section, rows);
           for (let j = 0; j < mapped.length; j++) {
             mapped[j].hotelBedId = fileId;
             batchAggregated[section].push(mapped[j]);
           }
         }
-        
-        aggregated++;
       }
       
-      clearInterval(aggProgressInterval);
-      
       const aggTime = ((Date.now() - aggStart) / 1000).toFixed(1);
-      console.log(`   ✅ Aggregation done in ${aggTime}s`);
+      console.log(`   ⚡ Aggregated in ${aggTime}s`);
       
       // Insert file records for this batch
       if (fileRecords.length > 0) {
@@ -547,40 +530,31 @@ export default class HotelBedFileRepo {
       }
       
       // Insert section data for this batch
-      const INSERT_BATCH = 6000; // 💪 Optimized for r7a.xlarge
+      const INSERT_BATCH = 5000; // 🚀 Larger inserts for speed
       
       const sectionKeys = Object.keys(batchAggregated);
-      console.log(`📊 Batch ${batchNum}/${totalBatches} has ${sectionKeys.length} sections`);
+      console.log(`   📊 Inserting ${sectionKeys.length} tables...`);
       
-      // 🎯 SEQUENTIAL INSERTION: Insert tables one-by-one for better performance
-      let tableNum = 0;
-      for (const [section, rows] of Object.entries(batchAggregated)) {
-        const tableName = SECTION_TABLE_MAP[section];
-        if (!tableName || rows.length === 0) continue;
-        
-        tableNum++;
-        console.log(`   📝 [${tableNum}/${sectionKeys.length}] Inserting ${tableName}: ${rows.length.toLocaleString()} records...`);
-        
-        try {
-          let inserted = 0;
-          for (let i = 0; i < rows.length; i += INSERT_BATCH) {
-            const chunk = rows.slice(i, i + INSERT_BATCH);
-            await bulkInsertRaw(tableName, chunk, pool, { onDuplicate: mode === "update" });
-            inserted += chunk.length;
-            
-            // Progress for large sections
-            if (rows.length > 20000 && inserted % 20000 === 0) {
-              console.log(`      ⏳ ${inserted.toLocaleString()}/${rows.length.toLocaleString()} (${Math.round(inserted/rows.length*100)}%)`);
-            }
-          }
+      // 🚀 CONTROLLED PARALLEL INSERTION: 6 tables at a time for max speed
+      const insertLimit = pLimit(6); // Insert 6 tables simultaneously
+      const insertPromises = Object.entries(batchAggregated).map(([section, rows]) =>
+        insertLimit(async () => {
+          const tableName = SECTION_TABLE_MAP[section];
+          if (!tableName || rows.length === 0) return;
           
-          // Track totals
-          globalInsertResults[tableName] = (globalInsertResults[tableName] || 0) + rows.length;
-          console.log(`      ✅ ${tableName} done!`);
-        } catch (error: any) {
-          console.error(`❌ ERROR inserting into ${tableName}:`, error.message);
-        }
-      }
+          try {
+            for (let i = 0; i < rows.length; i += INSERT_BATCH) {
+              const chunk = rows.slice(i, i + INSERT_BATCH);
+              await bulkInsertRaw(tableName, chunk, pool, { onDuplicate: mode === "update" });
+            }
+            globalInsertResults[tableName] = (globalInsertResults[tableName] || 0) + rows.length;
+          } catch (error: any) {
+            console.error(`   ❌ ${tableName}: ${error.message}`);
+          }
+        })
+      );
+      
+      await Promise.all(insertPromises);
       
       totalProcessed += validParsedData.length;
       
@@ -594,9 +568,9 @@ export default class HotelBedFileRepo {
       const remainingBatches = totalBatches - batchNum;
       const etaMinutes = Math.round((avgTimePerBatch * remainingBatches) / 60000);
       
-      // Log progress every batch (force output)
-      console.log(`✅ Batch ${batchNum}/${totalBatches} completed in ${batchTime}s | Progress: ${totalProcessed}/${totalFiles} (${Math.round(totalProcessed/totalFiles*100)}%) | ETA: ~${etaMinutes}min`);
-      spinner.text = `📖 Batch ${batchNum}/${totalBatches} done | ${totalProcessed}/${totalFiles} files | ETA: ~${etaMinutes}min`;
+      // Log progress - concise output
+      console.log(`   ✅ Done in ${batchTime}s | ${totalProcessed}/${totalFiles} (${Math.round(totalProcessed/totalFiles*100)}%) | ETA: ~${etaMinutes}min`);
+      spinner.text = `⚡ ${batchNum}/${totalBatches} | ${totalProcessed}/${totalFiles} | ETA: ~${etaMinutes}min`;
       
       // Force GC after each super-batch (no delay needed - async GC)
       if (global.gc) {

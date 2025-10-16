@@ -14,7 +14,11 @@ export async function bulkInsertRaw(
   if (!rows.length) return;
 
   const columns = Object.keys(rows[0]);
-  const columnsSql = columns.map(c => `\`${c}\``).join(", ");
+  
+  // 🚀 AUTO-ADD id column if missing (let MySQL generate UUID)
+  const hasId = columns.includes('id');
+  const finalColumns = hasId ? columns : ['id', ...columns];
+  const columnsSql = finalColumns.map(c => `\`${c}\``).join(", ");
 
   const valuesSql = rows
     .map(row => {
@@ -26,6 +30,11 @@ export async function bulkInsertRaw(
         if (typeof v === "string") return `'${escapeString(v)}'`;
         return `'${escapeString(String(v))}'`;
       });
+      
+      // 🚀 If id not present, prepend UUID() function
+      if (!hasId) {
+        return `(UUID(), ${vals.join(",")})`;
+      }
       return `(${vals.join(",")})`;
     })
     .join(",");
@@ -33,7 +42,7 @@ export async function bulkInsertRaw(
   let sql = `INSERT INTO \`${table}\` (${columnsSql}) VALUES ${valuesSql}`;
 
   if (options?.onDuplicate) {
-    const updates = columns.filter(c => c !== "id").map(c => `\`${c}\`=VALUES(\`${c}\`)`).join(", ");
+    const updates = finalColumns.filter(c => c !== "id").map(c => `\`${c}\`=VALUES(\`${c}\`)`).join(", ");
     if (updates) sql += ` ON DUPLICATE KEY UPDATE ${updates}`;
   }
 
