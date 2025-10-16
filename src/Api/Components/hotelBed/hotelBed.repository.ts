@@ -503,32 +503,40 @@ export default class HotelBedFileRepo {
       const batchAggregated: Record<string, any[]> = {};
       const fileRecords: any[] = [];
       
-      validParsedData.forEach(({ fileId, fileName, sections }: any) => {
-        // File record - Keep fileId (needed as foreign key for child records)
-        fileRecords.push({
-          id: fileId,
-          name: fileName,
-          createdAt: new Date().toISOString().slice(0, 19).replace('T', ' ')
-        });
+      // 🚀 OPTIMIZED: Process data in a single pass without intermediate arrays
+      const createdAt = new Date().toISOString().slice(0, 19).replace('T', ' ');
+      const totalToAggregate = validParsedData.length;
+      let aggregated = 0;
+      
+      const aggProgressInterval = setInterval(() => {
+        console.log(`      ⏳ Aggregating... ${aggregated}/${totalToAggregate} files (${Math.round(aggregated/totalToAggregate*100)}%)`);
+      }, 3000); // Every 3 seconds
+      
+      for (let i = 0; i < validParsedData.length; i++) {
+        const { fileId, fileName, sections } = validParsedData[i];
         
-        // Aggregate sections
-        for (const [section, rows] of Object.entries(sections as Record<string, any[]>)) {
+        // File record
+        fileRecords.push({ id: fileId, name: fileName, createdAt });
+        
+        // Process sections
+        for (const section in sections) {
+          const rows = sections[section];
           if (!rows || rows.length === 0) continue;
           
-          if (!batchAggregated[section]) {
-            batchAggregated[section] = [];
-          }
+          if (!batchAggregated[section]) batchAggregated[section] = [];
           
-          // 🚀 Let database generate UUIDs - much faster than JS!
-          const mappedRows = mapRow(section, rows).map((r: any) => ({
-                // id: randomUUID(),  // Removed! DB will auto-generate
-                hotelBedId: fileId,
-                ...r,
-              }));
-
-          batchAggregated[section].push(...mappedRows);
+          // 🚀 Single-pass mapping (no intermediate arrays!)
+          const mapped = mapRow(section, rows);
+          for (let j = 0; j < mapped.length; j++) {
+            mapped[j].hotelBedId = fileId;
+            batchAggregated[section].push(mapped[j]);
+          }
         }
-      });
+        
+        aggregated++;
+      }
+      
+      clearInterval(aggProgressInterval);
       
       const aggTime = ((Date.now() - aggStart) / 1000).toFixed(1);
       console.log(`   ✅ Aggregation done in ${aggTime}s`);
