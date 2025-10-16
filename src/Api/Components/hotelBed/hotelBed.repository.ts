@@ -246,15 +246,17 @@ export default class HotelBedFileRepo {
   private static parseCNCTLine(line: string): any[] {
     const parts = line.split(":");
     
-    // Extract base fields (0-3) - fields 4-6 are empty in ZIP
+    // Extract base fields (0-3)
     const startDate = parts[0] || "";
     const endDate = parts[1] || "";
     const roomCode = parts[2] || "";
     const characteristic = parts[3] || "";
-    // Note: parts[4] (rateCode), parts[5] (releaseDays), parts[6] (allotment) are empty in ZIP
     
-    // Extract tuples (everything after field 6)
-    const tuplesStr = parts.slice(7).join(":"); // Re-join in case there are colons inside
+    // 🔧 FIX: Format is field0:field1:field2:field3:field4:field5:(tuples)
+    // There are only 6 colons, so tuples start at index 6, NOT 7!
+    // parts[4], parts[5] are empty (rateCode, releaseDays)
+    // parts[6] onwards contains the tuples
+    const tuplesStr = parts.slice(6).join(":"); // Re-join in case there are colons inside tuples
     
     // 🔍 DEBUG: Log if no tuples found
     if (!tuplesStr || tuplesStr.trim() === "") {
