@@ -830,11 +830,11 @@ export default class HotelBedFileRepo {
    * Truncates Inventory table first, then builds from current database data
    */
   public static async rebuildInventory() {
-    console.log('🧹 Cleaning old Inventory table...');
-    await pool.query('TRUNCATE TABLE `Inventory`');
-    console.log('✅ Old inventory cleaned!');
+    // console.log('🧹 Cleaning old Inventory table...');
+    // await pool.query('TRUNCATE TABLE `Inventory`');
+    // console.log('✅ Old inventory cleaned!');
     
-    console.log('🏗️ Building fresh Inventory from current database data...');
+    // console.log('🏗️ Building fresh Inventory from current database data...');
     await this.buildInventoryFromDatabase();
   }
 
