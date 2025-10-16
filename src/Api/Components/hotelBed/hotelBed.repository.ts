@@ -14,14 +14,14 @@ const BATCH_SIZE = 2000;
 const CONCURRENCY = 5;
 
 
-// 🎯 BALANCED POOL: Optimized to avoid lock timeouts
+// ✅ SEQUENTIAL POOL: Optimized for one-at-a-time inserts
 const pool = mysql.createPool({
   host: "107.21.156.43",
   user: "asadaftab",
   password: "Asad124@",
   database: "hotelbed",
   waitForConnections: true,
-  connectionLimit: 40, // 🎯 Balanced - enough for 5 parallel inserts
+  connectionLimit: 20, // ✅ Sequential inserts need fewer connections
   queueLimit: 0,
   enableKeepAlive: true,
   keepAliveInitialDelay: 0,
@@ -438,10 +438,10 @@ export default class HotelBedFileRepo {
     const allFiles = await this.getAllFilePaths(dir, ['GENERAL']);
     spinner.succeed(`✅ Found ${allFiles.length} CONTRACT files to process`);
 
-    // 🎯 OPTIMIZED STREAMING: Balance between speed and stability
-    // ⚡ Fast flow without lock timeouts
-    const MICRO_BATCH = 800; // 🎯 Balanced batch size
-    const PARSE_CONCURRENCY = 120; // 🎯 Controlled parsing
+    // ✅ STABLE STREAMING: Sequential inserts = No locks!
+    // 🎯 Optimized for 32GB RAM with no database conflicts
+    const MICRO_BATCH = 1200; // 🎯 Larger batches (sequential is fast!)
+    const PARSE_CONCURRENCY = 120; // 🎯 Max parsing power
     const totalFiles = allFiles.length;
     let totalProcessed = 0;
     const globalInsertResults: Record<string, number> = {};
@@ -453,8 +453,8 @@ export default class HotelBedFileRepo {
     await pool.query('SET sql_log_bin = 0'); // 🚀 Disable binary logging - 20-30% faster!
     // Note: innodb_flush_log_at_trx_commit is GLOBAL only (too risky to change server-wide)
     
-    console.log(`\n🎯 OPTIMIZED STREAMING: Fast + Stable (No lock timeouts!)`);
-    console.log(`⚡ Batches of ${MICRO_BATCH} files | 5 parallel inserts | 40 DB connections`);
+    console.log(`\n✅ STABLE STREAMING: Sequential inserts = ZERO lock conflicts!`);
+    console.log(`⚡ ${MICRO_BATCH} files per batch | One table at a time | No parallel conflicts!`);
     spinner.start(`⚡ STREAMING ${totalFiles} files...`);
     const processStart = Date.now();
     
@@ -511,27 +511,22 @@ export default class HotelBedFileRepo {
         await bulkInsertRaw("HotelBedFile", fileRecords, pool, { onDuplicate: true });
       }
       
-      // ⚡ CONTROLLED INSERTION: Balanced for no locks
-      const INSERT_BATCH = 6000; // 🎯 Balanced batch size
-      const insertLimit = pLimit(5); // 🎯 5 tables parallel - no lock timeout!
+      // ✅ SEQUENTIAL INSERTION: One table at a time - ZERO lock conflicts!
+      const INSERT_BATCH = 8000; // Large batches for speed
       
-      await Promise.all(
-        Object.entries(batchAggregated).map(([section, rows]) =>
-          insertLimit(async () => {
-            const tableName = SECTION_TABLE_MAP[section];
-            if (!tableName || rows.length === 0) return;
-            
-            try {
-              for (let i = 0; i < rows.length; i += INSERT_BATCH) {
-                await bulkInsertRaw(tableName, rows.slice(i, i + INSERT_BATCH), pool, { onDuplicate: mode === "update" });
-              }
-              globalInsertResults[tableName] = (globalInsertResults[tableName] || 0) + rows.length;
-            } catch (error: any) {
-              console.error(`❌ ${tableName}: ${error.message}`);
-            }
-          })
-        )
-      );
+      for (const [section, rows] of Object.entries(batchAggregated)) {
+        const tableName = SECTION_TABLE_MAP[section];
+        if (!tableName || rows.length === 0) continue;
+        
+        try {
+          for (let i = 0; i < rows.length; i += INSERT_BATCH) {
+            await bulkInsertRaw(tableName, rows.slice(i, i + INSERT_BATCH), pool, { onDuplicate: mode === "update" });
+          }
+          globalInsertResults[tableName] = (globalInsertResults[tableName] || 0) + rows.length;
+        } catch (error: any) {
+          console.error(`❌ ${tableName}: ${error.message}`);
+        }
+      }
       
       totalProcessed += validParsedData.length;
       await pool.query('COMMIT');
