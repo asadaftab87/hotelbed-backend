@@ -441,9 +441,9 @@ export default class HotelBedFileRepo {
     spinner.succeed(`✅ Found ${allFiles.length} CONTRACT files to process`);
 
     // 🚀 STREAMING APPROACH: Parse batches → Insert immediately → Clear memory  
-    // ⚡ ULTRA-FAST: Optimized for maximum speed while maintaining stability
-    const SUPER_BATCH = 10000; // ⚡ Balanced for speed (10k files per batch)
-    const PARSE_CONCURRENCY = 150; // ⚡ Aggressive parallel parsing
+    // 💪 OPTIMIZED FOR r7a.xlarge (32GB RAM, 4 vCPUs)
+    const SUPER_BATCH = 6000; // 💪 Optimized for 32GB RAM
+    const PARSE_CONCURRENCY = 80; // 💪 Optimized for 4 vCPUs
     const totalFiles = allFiles.length;
     let totalProcessed = 0;
     const globalInsertResults: Record<string, number> = {};
@@ -468,10 +468,16 @@ export default class HotelBedFileRepo {
       
       // 🎯 Parse with concurrency limit to prevent system overload
       const limit = pLimit(PARSE_CONCURRENCY);
+      let parsedCount = 0;
+      const progressInterval = setInterval(() => {
+        console.log(`   ⏳ Parsing... ${parsedCount}/${superBatch.length} files (${Math.round(parsedCount/superBatch.length*100)}%)`);
+      }, 5000); // Log every 5 seconds
+      
       const parsedData = await Promise.all(
         superBatch.map((filePath) => limit(async () => {
           try {
             const sections = await this.parseFileToJson(filePath);
+            parsedCount++;
             return {
               fileId: randomUUID(),
               fileName: path.basename(filePath),
@@ -479,10 +485,14 @@ export default class HotelBedFileRepo {
             };
           } catch (error: any) {
             console.error(`Error parsing ${filePath}:`, error.message);
+            parsedCount++;
             return null;
           }
         }))
       );
+      
+      clearInterval(progressInterval);
+      console.log(`   ✅ Parsed ${superBatch.length} files in ${((Date.now() - batchStart) / 1000).toFixed(1)}s`);
       
       const validParsedData = parsedData.filter(Boolean) as any[];
       
@@ -522,7 +532,7 @@ export default class HotelBedFileRepo {
       }
       
       // Insert section data for this batch
-      const INSERT_BATCH = 10000; // ⚡ Larger batches for faster insertion
+      const INSERT_BATCH = 6000; // 💪 Optimized for r7a.xlarge
       
       const sectionKeys = Object.keys(batchAggregated);
       console.log(`📊 Batch ${batchNum}/${totalBatches} has ${sectionKeys.length} sections`);
