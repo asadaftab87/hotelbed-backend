@@ -492,16 +492,19 @@ export default class HotelBedFileRepo {
       );
       
       clearInterval(progressInterval);
-      console.log(`   ✅ Parsed ${superBatch.length} files in ${((Date.now() - batchStart) / 1000).toFixed(1)}s`);
+      const parseTime = ((Date.now() - batchStart) / 1000).toFixed(1);
+      console.log(`   ✅ Parsed ${superBatch.length} files in ${parseTime}s`);
       
       const validParsedData = parsedData.filter(Boolean) as any[];
       
       // Aggregate this super-batch
+      console.log(`   🔄 Aggregating data from ${validParsedData.length} files...`);
+      const aggStart = Date.now();
       const batchAggregated: Record<string, any[]> = {};
       const fileRecords: any[] = [];
       
       validParsedData.forEach(({ fileId, fileName, sections }: any) => {
-        // File record
+        // File record - Keep fileId (needed as foreign key for child records)
         fileRecords.push({
           id: fileId,
           name: fileName,
@@ -516,8 +519,9 @@ export default class HotelBedFileRepo {
             batchAggregated[section] = [];
           }
           
+          // 🚀 Let database generate UUIDs - much faster than JS!
           const mappedRows = mapRow(section, rows).map((r: any) => ({
-                id: randomUUID(),
+                // id: randomUUID(),  // Removed! DB will auto-generate
                 hotelBedId: fileId,
                 ...r,
               }));
@@ -525,6 +529,9 @@ export default class HotelBedFileRepo {
           batchAggregated[section].push(...mappedRows);
         }
       });
+      
+      const aggTime = ((Date.now() - aggStart) / 1000).toFixed(1);
+      console.log(`   ✅ Aggregation done in ${aggTime}s`);
       
       // Insert file records for this batch
       if (fileRecords.length > 0) {
@@ -537,10 +544,14 @@ export default class HotelBedFileRepo {
       const sectionKeys = Object.keys(batchAggregated);
       console.log(`📊 Batch ${batchNum}/${totalBatches} has ${sectionKeys.length} sections`);
       
-      // ⚡ PARALLEL INSERTION: Insert multiple tables simultaneously
-      const insertPromises = Object.entries(batchAggregated).map(async ([section, rows]) => {
+      // 🎯 SEQUENTIAL INSERTION: Insert tables one-by-one for better performance
+      let tableNum = 0;
+      for (const [section, rows] of Object.entries(batchAggregated)) {
         const tableName = SECTION_TABLE_MAP[section];
-        if (!tableName || rows.length === 0) return;
+        if (!tableName || rows.length === 0) continue;
+        
+        tableNum++;
+        console.log(`   📝 [${tableNum}/${sectionKeys.length}] Inserting ${tableName}: ${rows.length.toLocaleString()} records...`);
         
         try {
           let inserted = 0;
@@ -549,22 +560,19 @@ export default class HotelBedFileRepo {
             await bulkInsertRaw(tableName, chunk, pool, { onDuplicate: mode === "update" });
             inserted += chunk.length;
             
-            // Progress indicator for very large sections only
-            if (rows.length > 50000 && inserted % 50000 === 0) {
-              console.log(`   ⏳ ${tableName}: ${inserted.toLocaleString()}/${rows.length.toLocaleString()}...`);
+            // Progress for large sections
+            if (rows.length > 20000 && inserted % 20000 === 0) {
+              console.log(`      ⏳ ${inserted.toLocaleString()}/${rows.length.toLocaleString()} (${Math.round(inserted/rows.length*100)}%)`);
             }
           }
           
           // Track totals
           globalInsertResults[tableName] = (globalInsertResults[tableName] || 0) + rows.length;
-          console.log(`   ✅ ${tableName}: ${rows.length.toLocaleString()} records`);
+          console.log(`      ✅ ${tableName} done!`);
         } catch (error: any) {
           console.error(`❌ ERROR inserting into ${tableName}:`, error.message);
         }
-      });
-      
-      // Wait for all insertions to complete
-      await Promise.all(insertPromises);
+      }
       
       totalProcessed += validParsedData.length;
       
@@ -971,7 +979,7 @@ export default class HotelBedFileRepo {
 
           if (currentDate) {
             inventoryRows.push({
-              id: randomUUID(),
+              // id: randomUUID(),  // 🚀 Removed! DB will auto-generate
               hotelBedId: restriction.hotelBedId,
               calendarDate: currentDate.toISOString().slice(0, 19).replace('T', ' '),
               hotelCode: hotelCode,
@@ -995,7 +1003,7 @@ export default class HotelBedFileRepo {
       } else {
         // No tuples - create single record
         inventoryRows.push({
-          id: randomUUID(),
+          // id: randomUUID(),  // 🚀 Removed! DB will auto-generate
           hotelBedId: restriction.hotelBedId,
           calendarDate: restriction.startDate ? new Date(restriction.startDate).toISOString().slice(0, 19).replace('T', ' ') : null,
           hotelCode: hotelCode,
