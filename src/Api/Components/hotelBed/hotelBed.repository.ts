@@ -21,7 +21,7 @@ const pool = mysql.createPool({
   password: "Asad124@",
   database: "hotelbed",
   waitForConnections: true,
-  connectionLimit: 200, // 🚀 MAXIMUM for 200 concurrent files (1 HOUR TARGET!)
+  connectionLimit: 100, // 🎯 BALANCED for 100 concurrent files (1 HOUR TARGET!)
   queueLimit: 0,
   enableKeepAlive: true,
   keepAliveInitialDelay: 0,
@@ -439,8 +439,8 @@ export default class HotelBedFileRepo {
     spinner.succeed(`✅ Found ${allFiles.length} CONTRACT files to process`);
 
     // 🎯 SWEET SPOT: Optimized for sustained high performance
-    // 🚀 200 files = MAXIMUM SPEED for 1-hour completion!
-    const FILE_CONCURRENCY = 200; // 🚀 200 files parallel (MAXIMUM SPEED!)
+    // 🎯 100 files = BALANCED speed for 1-hour completion!
+    const FILE_CONCURRENCY = 100; // 🎯 100 files parallel (BALANCED SPEED!)
     const totalFiles = allFiles.length;
     const globalInsertResults: Record<string, number> = {};
     
@@ -451,7 +451,7 @@ export default class HotelBedFileRepo {
     
     console.log(`\n🎯 SWEET SPOT MODE: Sustained high performance!`);
     console.log(`⚡ HAND-TO-HAND: File → Parse → Insert → Next (INSTANT flow!)`);
-    console.log(`💪 ${FILE_CONCURRENCY} files parallel | 200 DB connections | 20k batches | MySQL UUID`);
+    console.log(`💪 ${FILE_CONCURRENCY} files parallel | 100 DB connections | 20k batches | MySQL UUID`);
     console.log(`📊 Progress every 60s | Expected: ~60 minutes (1 HOUR TARGET!)`);
     spinner.start(`⚡ Processing ${totalFiles} files at OPTIMAL SPEED...`);
     const processStart = Date.now();
