@@ -14,14 +14,14 @@ const BATCH_SIZE = 2000;
 const CONCURRENCY = 5;
 
 
-// 🔥 HIGH-CONCURRENCY POOL: 150 files parallel processing!
+// 🔥 BEAST MODE POOL: 250 files parallel processing!
 const pool = mysql.createPool({
   host: "107.21.156.43",
   user: "asadaftab",
   password: "Asad124@",
   database: "hotelbed",
   waitForConnections: true,
-  connectionLimit: 100, // 🔥 High limit for 150 concurrent files
+  connectionLimit: 150, // 🔥 Maximum for 250 concurrent files
   queueLimit: 0,
   enableKeepAlive: true,
   keepAliveInitialDelay: 0,
@@ -438,9 +438,9 @@ export default class HotelBedFileRepo {
     const allFiles = await this.getAllFilePaths(dir, ['GENERAL']);
     spinner.succeed(`✅ Found ${allFiles.length} CONTRACT files to process`);
 
-    // ⚡ INDEPENDENT FILE PROCESSING: Har file apna data khud insert kare!
-    // 🔥 MAXIMUM SPEED: 150 files parallel for fast completion!
-    const FILE_CONCURRENCY = 150; // 🔥 150 files parallel (independent!)
+    // 🔥 ULTRA-HIGH CONCURRENCY: Maximum parallel processing!
+    // ⚡ BEAST MODE: 250 files parallel for maximum speed!
+    const FILE_CONCURRENCY = 250; // 🔥 250 files parallel (independent!)
     const totalFiles = allFiles.length;
     const globalInsertResults: Record<string, number> = {};
     
@@ -449,20 +449,22 @@ export default class HotelBedFileRepo {
     await pool.query('SET unique_checks = 0');
     await pool.query('SET sql_log_bin = 0');
     
-    console.log(`\n⚡ MAXIMUM SPEED STREAMING: Har file independently process!`);
-    console.log(`🔥 NO AGGREGATION: Direct file → DB flow!`);
-    console.log(`💪 ${FILE_CONCURRENCY} files parallel | 100 DB connections | MySQL UUID`);
-    console.log(`📊 Progress every 30s | Expected: ~35-45 minutes (5x faster than batching!)`);
-    spinner.start(`⚡ Processing ${totalFiles} files at MAX SPEED...`);
+    console.log(`\n🔥 BEAST MODE: 250 files parallel processing!`);
+    console.log(`⚡ HAND-TO-HAND: Parse → Insert → Parse → Insert!`);
+    console.log(`💪 ${FILE_CONCURRENCY} files parallel | 150 DB connections | 10k batches | MySQL UUID`);
+    console.log(`📊 Progress every 60s | Expected: ~70-80 minutes`);
+    spinner.start(`🔥 Processing ${totalFiles} files at BEAST MODE...`);
     const processStart = Date.now();
     
     // ⚡ Progress tracking
     let totalProcessed = 0;
     const progressInterval = setInterval(() => {
       const pct = Math.round(totalProcessed/totalFiles*100);
-      const elapsed = ((Date.now() - processStart) / 1000 / 60).toFixed(1);
-      console.log(`⚡ Progress: ${totalProcessed}/${totalFiles} (${pct}%) | ${elapsed}min elapsed`);
-    }, 30000); // Every 30 seconds
+      const elapsed = parseFloat(((Date.now() - processStart) / 1000 / 60).toFixed(1));
+      const rate = Math.round(totalProcessed / (elapsed || 1));
+      const etaMin = Math.round((totalFiles - totalProcessed) / (rate || 1));
+      console.log(`🔥 ${totalProcessed.toLocaleString()}/${totalFiles.toLocaleString()} (${pct}%) | ${rate}/min | ETA: ${etaMin}min`);
+    }, 60000); // Every 60 seconds
     
     // 🔥 FILE-BY-FILE PROCESSING: Each file is processed independently!
     const fileLimit = pLimit(FILE_CONCURRENCY);
