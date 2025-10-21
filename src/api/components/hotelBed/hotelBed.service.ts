@@ -133,4 +133,143 @@ export class HotelBedFileService {
       throw error;
     }
   }
+
+  /**
+   * Get hotels with optional pagination and filters
+   */
+  async getHotels(page?: number, limit?: number, filters?: any): Promise<any> {
+    try {
+      Logger.info('[SERVICE] Fetching hotels', { page, limit, filters });
+      
+      const result = await this.repository.getHotels(page, limit, filters);
+      
+      if (page !== undefined && limit !== undefined) {
+        Logger.info('[SERVICE] Hotels fetched successfully (paginated)', {
+          count: result.data.length,
+          page: result.pagination.page,
+          total: result.pagination.total
+        });
+      } else {
+        Logger.info('[SERVICE] Hotels fetched successfully (all)', {
+          count: result.data.length,
+          total: result.total
+        });
+      }
+      
+      return result;
+    } catch (error: any) {
+      Logger.error('[SERVICE] Error fetching hotels', { error: error.message });
+      throw error;
+    }
+  }
+
+  /**
+   * Get single hotel by ID (basic info only)
+   */
+  async getHotelById(hotelId: number): Promise<any> {
+    try {
+      Logger.info('[SERVICE] Fetching hotel by ID', { hotelId });
+      
+      const hotel = await this.repository.getHotelById(hotelId);
+      
+      if (!hotel) {
+        Logger.warn('[SERVICE] Hotel not found', { hotelId });
+        return null;
+      }
+      
+      Logger.info('[SERVICE] Hotel fetched successfully', { hotelId });
+      return hotel;
+    } catch (error: any) {
+      Logger.error('[SERVICE] Error fetching hotel by ID', { error: error.message });
+      throw error;
+    }
+  }
+
+  /**
+   * Get complete hotel details with all related data
+   */
+  async getHotelFullDetails(hotelId: number): Promise<any> {
+    try {
+      Logger.info('[SERVICE] Fetching complete hotel details', { hotelId });
+      
+      const hotel = await this.repository.getHotelFullDetails(hotelId);
+      
+      if (!hotel) {
+        Logger.warn('[SERVICE] Hotel not found', { hotelId });
+        return null;
+      }
+      
+      Logger.info('[SERVICE] Complete hotel details fetched successfully', { 
+        hotelId,
+        totalRooms: hotel.summary?.totalRooms || 0,
+        totalRates: hotel.summary?.totalRates || 0,
+        totalContracts: hotel.summary?.totalContracts || 0
+      });
+      
+      return hotel;
+    } catch (error: any) {
+      Logger.error('[SERVICE] Error fetching complete hotel details', { error: error.message });
+      throw error;
+    }
+  }
+
+  /**
+   * Get hotel rates with pagination
+   */
+  async getHotelRates(hotelId: number, page: number, limit: number): Promise<any> {
+    try {
+      Logger.info('[SERVICE] Fetching hotel rates', { hotelId, page, limit });
+      
+      const result = await this.repository.getHotelRates(hotelId, page, limit);
+      
+      Logger.info('[SERVICE] Hotel rates fetched successfully', {
+        hotelId,
+        count: result.data.length,
+        total: result.pagination.total
+      });
+      
+      return result;
+    } catch (error: any) {
+      Logger.error('[SERVICE] Error fetching hotel rates', { error: error.message });
+      throw error;
+    }
+  }
+
+  /**
+   * Get destinations with pagination
+   */
+  async getDestinations(page: number, limit: number): Promise<any> {
+    try {
+      Logger.info('[SERVICE] Fetching destinations', { page, limit });
+      
+      const result = await this.repository.getDestinations(page, limit);
+      
+      Logger.info('[SERVICE] Destinations fetched successfully', {
+        count: result.data.length,
+        total: result.pagination.total
+      });
+      
+      return result;
+    } catch (error: any) {
+      Logger.error('[SERVICE] Error fetching destinations', { error: error.message });
+      throw error;
+    }
+  }
+
+  /**
+   * Get database statistics
+   */
+  async getDatabaseStats(): Promise<any> {
+    try {
+      Logger.info('[SERVICE] Fetching database stats');
+      
+      const stats = await this.repository.getDatabaseStats();
+      
+      Logger.info('[SERVICE] Database stats fetched successfully');
+      return stats;
+    } catch (error: any) {
+      Logger.error('[SERVICE] Error fetching database stats', { error: error.message });
+      throw error;
+    }
+  }
 }

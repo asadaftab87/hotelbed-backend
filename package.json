@@ -13,7 +13,8 @@
     "watch": "tsc -w",
     "clean": "rm -rf dist",
     "create-tables": "ts-node -r tsconfig-paths/register scripts/createTables.ts",
-    "reset-db": "ts-node -r tsconfig-paths/register scripts/resetDatabase.ts"
+    "reset-db": "ts-node -r tsconfig-paths/register scripts/resetDatabase.ts",
+    "fix-destinations": "ts-node -r tsconfig-paths/register scripts/fixDestinationNames.ts"
   },
   "keywords": [
     "typescript",

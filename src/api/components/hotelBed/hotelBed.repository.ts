@@ -905,14 +905,18 @@ export class HotelBedFileRepository {
 
         for (const line of batch) {
           try {
-            const parts = line.split(':');
+            // Clean line from any carriage returns or whitespace
+            const cleanLine = line.replace(/\r/g, '').trim();
+            const parts = cleanLine.split(':');
+            
             if (parts.length >= 3) {
-              values.push([
-                parts[0] || null,  // code
-                parts[1] || null,  // country_code
-                parts[2] || null,  // is_available
-                parts[3] || null   // name (4th field - WAS MISSING!)
-              ]);
+              const code = parts[0]?.trim() || null;
+              const countryCode = parts[1]?.trim() || null;
+              const isAvailable = parts[2]?.trim() || null;
+              // Name field doesn't exist in IDES_F file, use code as fallback
+              const name = parts[3]?.trim() || code;
+              
+              values.push([code, countryCode, isAvailable, name]);
             }
           } catch (error) {
             failed++;
@@ -1835,6 +1839,373 @@ export class HotelBedFileRepository {
         jsonFileNames: [],
         otherFileNames: []
       };
+    }
+  }
+
+  // ============================================
+  // GET/READ METHODS WITH PAGINATION
+  // ============================================
+
+  /**
+   * Build WHERE clause for hotel filters
+   */
+  private buildHotelFiltersWhereClause(filters?: any): { whereClause: string; params: any[] } {
+    let whereClause = '';
+    const params: any[] = [];
+    
+    if (filters?.destination_code) {
+      whereClause = 'WHERE destination_code = ?';
+      params.push(filters.destination_code);
+    }
+    
+    if (filters?.category) {
+      whereClause += whereClause ? ' AND category = ?' : 'WHERE category = ?';
+      params.push(filters.category);
+    }
+    
+    if (filters?.chain_code) {
+      whereClause += whereClause ? ' AND chain_code = ?' : 'WHERE chain_code = ?';
+      params.push(filters.chain_code);
+    }
+    
+    if (filters?.country_code) {
+      whereClause += whereClause ? ' AND country_code = ?' : 'WHERE country_code = ?';
+      params.push(filters.country_code);
+    }
+
+    if (filters?.name) {
+      whereClause += whereClause ? ' AND name LIKE ?' : 'WHERE name LIKE ?';
+      params.push(`%${filters.name}%`);
+    }
+
+    return { whereClause, params };
+  }
+
+  /**
+   * Get hotels with optional pagination
+   * If page/limit not provided, returns all hotels
+   */
+  async getHotels(page?: number, limit?: number, filters?: any): Promise<any> {
+    try {
+      // Build WHERE clause
+      const { whereClause, params } = this.buildHotelFiltersWhereClause(filters);
+
+      // Get total count
+      const countQuery = `SELECT COUNT(*) as total FROM hotels ${whereClause}`;
+      const [countResult]: any = await pool.query(countQuery, params);
+      const total = countResult[0].total;
+
+      // Check if pagination is requested
+      if (page !== undefined && limit !== undefined) {
+        // PAGINATED RESPONSE
+        const offset = (page - 1) * limit;
+        
+        const dataQuery = `
+          SELECT 
+            id, category, destination_code, chain_code, accommodation_type, 
+            ranking, group_hotel, country_code, state_code, 
+            longitude, latitude, name
+          FROM hotels 
+          ${whereClause}
+          ORDER BY id ASC
+          LIMIT ? OFFSET ?
+        `;
+        const [rows]: any = await pool.query(dataQuery, [...params, limit, offset]);
+
+        return {
+          data: rows,
+          pagination: {
+            page,
+            limit,
+            total,
+            totalPages: Math.ceil(total / limit),
+            hasNext: page < Math.ceil(total / limit),
+            hasPrev: page > 1
+          }
+        };
+      } else {
+        // ALL RECORDS (NO PAGINATION)
+        const dataQuery = `
+          SELECT 
+            id, category, destination_code, chain_code, accommodation_type, 
+            ranking, group_hotel, country_code, state_code, 
+            longitude, latitude, name
+          FROM hotels 
+          ${whereClause}
+          ORDER BY id ASC
+        `;
+        const [rows]: any = await pool.query(dataQuery, params);
+
+        return {
+          data: rows,
+          total,
+          count: rows.length
+        };
+      }
+    } catch (error: any) {
+      Logger.error('[REPO] Error fetching hotels', { error: error.message });
+      throw error;
+    }
+  }
+
+  /**
+   * Get single hotel by ID (basic info only)
+   */
+  async getHotelById(hotelId: number): Promise<any> {
+    try {
+      const query = `
+        SELECT 
+          id, category, destination_code, chain_code, accommodation_type, 
+          ranking, group_hotel, country_code, state_code, 
+          longitude, latitude, name
+        FROM hotels 
+        WHERE id = ?
+      `;
+      const [rows]: any = await pool.query(query, [hotelId]);
+      
+      if (rows.length === 0) {
+        return null;
+      }
+
+      return rows[0];
+    } catch (error: any) {
+      Logger.error('[REPO] Error fetching hotel by ID', { error: error.message });
+      throw error;
+    }
+  }
+
+  /**
+   * Get hotel with ESSENTIAL details (optimized for performance)
+   */
+  async getHotelFullDetails(hotelId: number): Promise<any> {
+    try {
+      // 1. Get hotel basic info
+      const hotelQuery = `
+        SELECT 
+          id, category, destination_code, chain_code, accommodation_type, 
+          ranking, group_hotel, country_code, state_code, 
+          longitude, latitude, name
+        FROM hotels 
+        WHERE id = ?
+      `;
+      const [hotelRows]: any = await pool.query(hotelQuery, [hotelId]);
+      
+      if (hotelRows.length === 0) {
+        return null;
+      }
+
+      const hotel = hotelRows[0];
+
+      // ⚡ OPTIMIZED: Parallel queries for speed + Limited data
+      const [
+        [rooms],
+        [rates],
+        [inventory],
+        [contracts],
+        [cancellationPolicies],
+        [supplements],
+        [rateTags]
+      ] = await Promise.all([
+        // Essential: Room allocations (limited to 10 most common)
+        pool.query(`
+          SELECT room_code, board_code, min_adults, max_adults, min_children, max_children, min_pax, max_pax
+          FROM hotel_room_allocations 
+          WHERE hotel_id = ? 
+          ORDER BY room_code
+          LIMIT 10
+        `, [hotelId]),
+        
+        // Essential: Latest rates (limited to 20 most recent)
+        pool.query(`
+          SELECT room_code, board_code, date_from, date_to, rate_type, base_price, tax_amount, adults, price
+          FROM hotel_rates 
+          WHERE hotel_id = ? 
+          ORDER BY date_from DESC
+          LIMIT 20
+        `, [hotelId]),
+        
+        // Essential: Recent inventory (limited to 10)
+        pool.query(`
+          SELECT room_code, board_code, date_from, date_to, availability_data
+          FROM hotel_inventory 
+          WHERE hotel_id = ? 
+          ORDER BY date_from DESC
+          LIMIT 10
+        `, [hotelId]),
+        
+        // Essential: Active contracts (limited to 5 most recent)
+        pool.query(`
+          SELECT destination_code, contract_code, rate_code, board_code, contract_type, date_from, date_to, currency
+          FROM hotel_contracts 
+          WHERE hotel_id = ? 
+          ORDER BY date_from DESC
+          LIMIT 5
+        `, [hotelId]),
+        
+        // Essential: Cancellation policies (limited to 5)
+        pool.query(`
+          SELECT policy_code, date_from, date_to, penalty_type, penalty_amount, cancellation_hours
+          FROM hotel_cancellation_policies 
+          WHERE hotel_id = ? 
+          ORDER BY date_from DESC
+          LIMIT 5
+        `, [hotelId]),
+        
+        // Essential: Supplements/offers (limited to 5)
+        pool.query(`
+          SELECT date_from, date_to, supplement_code, supplement_type, discount_percent, min_nights
+          FROM hotel_supplements 
+          WHERE hotel_id = ?
+          ORDER BY date_from DESC
+          LIMIT 5
+        `, [hotelId]),
+        
+        // Essential: Rate tags (usually small)
+        pool.query(`
+          SELECT tag_id, tag_name
+          FROM hotel_rate_tags 
+          WHERE hotel_id = ?
+          LIMIT 10
+        `, [hotelId])
+      ]);
+
+      // Combine essential data only
+      const roomsData: any = rooms || [];
+      const ratesData: any = rates || [];
+      const inventoryData: any = inventory || [];
+      const contractsData: any = contracts || [];
+      const cancellationData: any = cancellationPolicies || [];
+      const supplementsData: any = supplements || [];
+      const tagsData: any = rateTags || [];
+
+      return {
+        ...hotel,
+        details: {
+          rooms: roomsData,
+          rates: ratesData,
+          inventory: inventoryData,
+          contracts: contractsData,
+          cancellationPolicies: cancellationData,
+          supplements: supplementsData,
+          rateTags: tagsData
+        },
+        summary: {
+          totalRooms: roomsData.length,
+          totalRates: ratesData.length,
+          totalInventory: inventoryData.length,
+          totalContracts: contractsData.length,
+          hasSupplements: supplementsData.length > 0,
+          hasCancellationPolicies: cancellationData.length > 0
+        }
+      };
+    } catch (error: any) {
+      Logger.error('[REPO] Error fetching hotel full details', { error: error.message });
+      throw error;
+    }
+  }
+
+  /**
+   * Get hotel rates with pagination
+   */
+  async getHotelRates(hotelId: number, page: number = 1, limit: number = 20): Promise<any> {
+    try {
+      const offset = (page - 1) * limit;
+
+      // Get total count
+      const countQuery = `SELECT COUNT(*) as total FROM hotel_rates WHERE hotel_id = ?`;
+      const [countResult]: any = await pool.query(countQuery, [hotelId]);
+      const total = countResult[0].total;
+
+      // Get paginated data
+      const dataQuery = `
+        SELECT 
+          id, hotel_id, room_code, board_code, date_from, date_to,
+          rate_type, base_price, tax_amount, adults, board_type, price
+        FROM hotel_rates 
+        WHERE hotel_id = ?
+        ORDER BY date_from DESC, room_code ASC
+        LIMIT ? OFFSET ?
+      `;
+      const [rows]: any = await pool.query(dataQuery, [hotelId, limit, offset]);
+
+      return {
+        data: rows,
+        pagination: {
+          page,
+          limit,
+          total,
+          totalPages: Math.ceil(total / limit),
+          hasNext: page < Math.ceil(total / limit),
+          hasPrev: page > 1
+        }
+      };
+    } catch (error: any) {
+      Logger.error('[REPO] Error fetching hotel rates', { error: error.message });
+      throw error;
+    }
+  }
+
+  /**
+   * Get destinations with pagination
+   */
+  async getDestinations(page: number = 1, limit: number = 50): Promise<any> {
+    try {
+      const offset = (page - 1) * limit;
+
+      // Get total count
+      const countQuery = `SELECT COUNT(*) as total FROM destinations`;
+      const [countResult]: any = await pool.query(countQuery);
+      const total = countResult[0].total;
+
+      // Get paginated data
+      const dataQuery = `
+        SELECT code, country_code, is_available, name
+        FROM destinations
+        ORDER BY code ASC
+        LIMIT ? OFFSET ?
+      `;
+      const [rows]: any = await pool.query(dataQuery, [limit, offset]);
+
+      return {
+        data: rows,
+        pagination: {
+          page,
+          limit,
+          total,
+          totalPages: Math.ceil(total / limit),
+          hasNext: page < Math.ceil(total / limit),
+          hasPrev: page > 1
+        }
+      };
+    } catch (error: any) {
+      Logger.error('[REPO] Error fetching destinations', { error: error.message });
+      throw error;
+    }
+  }
+
+  /**
+   * Get database statistics
+   */
+  async getDatabaseStats(): Promise<any> {
+    try {
+      const tables = [
+        'hotels', 'categories', 'chains', 'destinations',
+        'hotel_contracts', 'hotel_rates', 'hotel_inventory',
+        'hotel_room_allocations', 'hotel_supplements',
+        'hotel_email_settings', 'hotel_configurations'
+      ];
+
+      const stats: any = {};
+
+      for (const table of tables) {
+        const [result]: any = await pool.query(`SELECT COUNT(*) as count FROM ${table}`);
+        stats[table] = result[0].count;
+      }
+
+      return stats;
+    } catch (error: any) {
+      Logger.error('[REPO] Error fetching database stats', { error: error.message });
+      throw error;
     }
   }
 }
