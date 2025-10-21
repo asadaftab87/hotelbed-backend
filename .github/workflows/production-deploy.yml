@@ -42,10 +42,6 @@ jobs:
             npm install --legacy-peer-deps
 
             echo "-----------------------------"
-            echo "📦 Generating Prisma..."
-            npx prisma generate
-
-            echo "-----------------------------"
             echo "🏗️ Building backend app..."
             npm run build
 
@@ -61,7 +57,7 @@ jobs:
             
             #!/bin/bash
             cd /home/ec2-user/hotelbed-backend
-            exec node --max-old-space-size=24576 --expose-gc --max-semi-space-size=64 --optimize-for-size dist/src/app.js
+            exec node --max-old-space-size=24576 --expose-gc --max-semi-space-size=64 --optimize-for-size dist/app.js
             WRAPPER_EOF
             
             chmod +x ~/hotelbed-backend/start-with-heap.sh
@@ -77,11 +73,11 @@ jobs:
             echo ""
             echo "🔍 Verifying heap size in actual process..."
             echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-            ps aux | grep "dist/src/app.js" | grep -v grep
+            ps aux | grep "dist/app.js" | grep -v grep
             echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
             
             # Check if flags applied
-            if ps aux | grep "dist/src/app.js" | grep -v grep | grep -q "max-old-space-size=24576"; then
+            if ps aux | grep "dist/app.js" | grep -v grep | grep -q "max-old-space-size=24576"; then
               echo "✅ Heap flags APPLIED successfully!"
             else
               echo "❌ ERROR: Heap flags NOT applied - check wrapper script!"
