@@ -38,6 +38,21 @@ jobs:
             git pull origin master
 
             echo "-----------------------------"
+            echo "🔧 Fixing case sensitivity (Linux)..."
+            # Remove wrong case directories that may exist from old commits
+            rm -rf src/Api
+            rm -rf src/api/Components
+            echo "✅ Removed incorrect case directories"
+            
+            # Verify correct structure exists
+            if [ -d "src/api/components" ]; then
+              echo "✅ Correct structure confirmed: src/api/components/"
+            else
+              echo "❌ ERROR: src/api/components/ not found!"
+              exit 1
+            fi
+
+            echo "-----------------------------"
             echo "📦 Installing dependencies..."
             npm install --legacy-peer-deps
 
