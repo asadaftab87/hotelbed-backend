@@ -2,7 +2,7 @@ module.exports = {
   apps: [
     {
       name: "hotelbed-backend",
-      script: "dist/src/app.js",
+      script: "dist/app.js",
       interpreter: "node",
       interpreter_args: "--max-old-space-size=24576 --expose-gc --max-semi-space-size=64 --optimize-for-size",
       env: {
