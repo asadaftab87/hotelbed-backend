@@ -434,3 +434,49 @@ CREATE TABLE IF NOT EXISTS `hotel_tax_info` (
   FOREIGN KEY (`hotel_id`) REFERENCES `hotels`(`id`) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
+-- ============================================
+-- CHEAPEST PRICE PER PERSON TABLE (Precomputed)
+-- ============================================
+CREATE TABLE IF NOT EXISTS `cheapest_pp` (
+  `id` BIGINT AUTO_INCREMENT PRIMARY KEY,
+  `hotel_id` BIGINT NOT NULL,
+  `category_tag` VARCHAR(20) DEFAULT 'CITY_TRIP' COMMENT 'CITY_TRIP or OTHER',
+  `start_date` DATE NOT NULL COMMENT 'Earliest bookable date',
+  `nights` INT NOT NULL COMMENT 'Number of nights',
+  `board_code` VARCHAR(10) COMMENT 'Board type: RO, BB, HB, FB, AI',
+  `room_code` VARCHAR(50) COMMENT 'Room code',
+  `price_pp` DECIMAL(10, 2) NOT NULL COMMENT 'Price per person (double occupancy)',
+  `total_price` DECIMAL(10, 2) NOT NULL COMMENT 'Total price for the stay',
+  `currency` VARCHAR(5) DEFAULT 'EUR',
+  `has_promotion` BOOLEAN DEFAULT FALSE COMMENT 'If promotion was applied',
+  `derived_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP COMMENT 'When this was computed',
+  `updated_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  INDEX `idx_hotel_category` (`hotel_id`, `category_tag`),
+  INDEX `idx_category_price` (`category_tag`, `price_pp`),
+  INDEX `idx_start_date` (`start_date`),
+  INDEX `idx_hotel_price` (`hotel_id`, `price_pp`),
+  UNIQUE KEY `uk_hotel_category` (`hotel_id`, `category_tag`),
+  FOREIGN KEY (`hotel_id`) REFERENCES `hotels`(`id`) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- ============================================
+-- SEARCH INDEX TABLE (For filters & sorting)
+-- ============================================
+CREATE TABLE IF NOT EXISTS `search_index` (
+  `id` BIGINT AUTO_INCREMENT PRIMARY KEY,
+  `hotel_id` BIGINT NOT NULL UNIQUE,
+  `destination_code` VARCHAR(10),
+  `category` VARCHAR(10),
+  `rating` DECIMAL(3, 1),
+  `min_price_pp` DECIMAL(10, 2) COMMENT 'Minimum price per person',
+  `max_price_pp` DECIMAL(10, 2) COMMENT 'Maximum price per person',
+  `has_promotions` BOOLEAN DEFAULT FALSE,
+  `last_updated` TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  INDEX `idx_destination` (`destination_code`),
+  INDEX `idx_category` (`category`),
+  INDEX `idx_price_range` (`min_price_pp`, `max_price_pp`),
+  INDEX `idx_rating` (`rating`),
+  INDEX `idx_promotions` (`has_promotions`),
+  FOREIGN KEY (`hotel_id`) REFERENCES `hotels`(`id`) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+

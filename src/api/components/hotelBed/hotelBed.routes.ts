@@ -86,5 +86,52 @@ export class HotelBedRoutes {
       cacheMiddleware(300),
       this.controller.getDatabaseStats
     );
+
+    /**
+     * Compute cheapest prices per person
+     * POST /hotelbed/compute-prices
+     * Query params: category (CITY_TRIP|OTHER|ALL), hotel_id (optional)
+     * No cache - heavy computation endpoint
+     */
+    this.router.post(
+      '/compute-prices',
+      this.controller.computePrices
+    );
+
+    /**
+     * Search hotels with cheapest prices
+     * GET /hotelbed/search
+     * Query params: destination, category, name, priceMin, priceMax, sort, page, limit
+     * Cache: 10 minutes (600s) - frequently searched
+     */
+    this.router.get(
+      '/search',
+      cacheMiddleware(600),
+      this.controller.searchHotels
+    );
+
+    /**
+     * Get available rooms for a hotel
+     * GET /hotelbed/hotels/:hotelId/available-rooms
+     * Query params: checkIn (optional), nights (optional)
+     * Cache: 5 minutes (300s)
+     */
+    this.router.get(
+      '/hotels/:hotelId/available-rooms',
+      cacheMiddleware(300),
+      this.controller.getAvailableRooms
+    );
+
+    /**
+     * Check availability for specific room and dates
+     * GET /hotelbed/check-availability
+     * Query params: hotel_id, room_code, checkIn, nights (all required)
+     * Cache: 2 minutes (120s)
+     */
+    this.router.get(
+      '/check-availability',
+      cacheMiddleware(120),
+      this.controller.checkAvailability
+    );
   }
 }

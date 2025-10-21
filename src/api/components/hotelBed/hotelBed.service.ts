@@ -186,11 +186,11 @@ export class HotelBedFileService {
   }
 
   /**
-   * Get complete hotel details with all related data
+   * Get complete hotel details with ALL related data (NO limits)
    */
   async getHotelFullDetails(hotelId: number): Promise<any> {
     try {
-      Logger.info('[SERVICE] Fetching complete hotel details', { hotelId });
+      Logger.info('[SERVICE] Fetching complete hotel details (ALL data)', { hotelId });
       
       const hotel = await this.repository.getHotelFullDetails(hotelId);
       
@@ -199,11 +199,25 @@ export class HotelBedFileService {
         return null;
       }
       
-      Logger.info('[SERVICE] Complete hotel details fetched successfully', { 
+      Logger.info('[SERVICE] Complete hotel details fetched successfully (ALL data)', { 
         hotelId,
         totalRooms: hotel.summary?.totalRooms || 0,
         totalRates: hotel.summary?.totalRates || 0,
-        totalContracts: hotel.summary?.totalContracts || 0
+        totalInventory: hotel.summary?.totalInventory || 0,
+        totalContracts: hotel.summary?.totalContracts || 0,
+        totalCancellationPolicies: hotel.summary?.totalCancellationPolicies || 0,
+        totalSupplements: hotel.summary?.totalSupplements || 0,
+        totalRateTags: hotel.summary?.totalRateTags || 0,
+        totalOccupancyRules: hotel.summary?.totalOccupancyRules || 0,
+        totalEmailSettings: hotel.summary?.totalEmailSettings || 0,
+        totalConfigurations: hotel.summary?.totalConfigurations || 0,
+        totalPromotions: hotel.summary?.totalPromotions || 0,
+        totalSpecialRequests: hotel.summary?.totalSpecialRequests || 0,
+        totalGroups: hotel.summary?.totalGroups || 0,
+        totalSpecialConditions: hotel.summary?.totalSpecialConditions || 0,
+        totalRoomFeatures: hotel.summary?.totalRoomFeatures || 0,
+        totalPricingRules: hotel.summary?.totalPricingRules || 0,
+        totalTaxInfo: hotel.summary?.totalTaxInfo || 0
       });
       
       return hotel;
@@ -269,6 +283,88 @@ export class HotelBedFileService {
       return stats;
     } catch (error: any) {
       Logger.error('[SERVICE] Error fetching database stats', { error: error.message });
+      throw error;
+    }
+  }
+
+  /**
+   * Compute cheapest prices - always ALL hotels
+   */
+  async computeCheapestPrices(category: string = 'ALL', hotelId?: number): Promise<any> {
+    try {
+      Logger.info('[SERVICE] 🔥 Starting', { category, hotelId });
+      
+      const result = await this.repository.computeCheapestPrices(category, hotelId);
+      
+      Logger.info('[SERVICE] ✅ Done', {
+        processed: result.processed,
+        computed: result.computed,
+        speed: result.speed
+      });
+      
+      return result;
+    } catch (error: any) {
+      Logger.error('[SERVICE] Error', { error: error.message });
+      throw error;
+    }
+  }
+
+  /**
+   * Search hotels with cheapest prices
+   */
+  async searchHotels(filters: any, sort: string, page: number, limit: number): Promise<any> {
+    try {
+      Logger.info('[SERVICE] Searching hotels', { filters, sort, page, limit });
+      
+      const result = await this.repository.searchHotels(filters, sort, page, limit);
+      
+      Logger.info('[SERVICE] Search completed', {
+        count: result.data.length,
+        total: result.pagination.total
+      });
+      
+      return result;
+    } catch (error: any) {
+      Logger.error('[SERVICE] Search error', { error: error.message });
+      throw error;
+    }
+  }
+
+  /**
+   * Get available rooms for a hotel
+   */
+  async getAvailableRooms(hotelId: number, checkIn?: string, nights?: number, page: number = 1, limit: number = 10, maxDates: number = 10): Promise<any> {
+    try {
+      Logger.info('[SERVICE] Getting available rooms', { hotelId, checkIn, nights, page, limit, maxDates });
+      
+      const result = await this.repository.getAvailableRooms(hotelId, checkIn, nights, page, limit, maxDates);
+      
+      Logger.info('[SERVICE] Available rooms fetched', { 
+        roomsCount: result.data.length,
+        total: result.pagination.total
+      });
+      
+      return result;
+    } catch (error: any) {
+      Logger.error('[SERVICE] Error getting available rooms', { error: error.message });
+      throw error;
+    }
+  }
+
+  /**
+   * Check availability - Get all available rooms for dates
+   */
+  async checkAvailability(hotelId: number, checkIn: string, nights: number, roomCode?: string): Promise<any> {
+    try {
+      Logger.info('[SERVICE] Checking availability', { hotelId, checkIn, nights, roomCode });
+      
+      const result = await this.repository.checkAvailability(hotelId, checkIn, nights, roomCode);
+      
+      Logger.info('[SERVICE] Availability checked', { roomsFound: result.rooms?.length || 0 });
+      
+      return result;
+    } catch (error: any) {
+      Logger.error('[SERVICE] Error checking availability', { error: error.message });
       throw error;
     }
   }

@@ -1515,15 +1515,10 @@ export class HotelBedFileRepository {
       const values: any[] = [];
 
       for (const line of lines) {
-        const parts = line.split(':');
-        if (parts.length >= 4) {
+        if (line.trim()) {
           values.push([
             hotelId,
-            parts[0] || null,  // promotion_code
-            parts[1] || null,  // date_from
-            parts[2] || null,  // date_to
-            parts[3] || null,  // promotion_type
-            line  // full_data
+            line  // promotion_data
           ]);
         }
       }
@@ -1531,7 +1526,7 @@ export class HotelBedFileRepository {
       if (values.length > 0) {
         const query = `
           INSERT IGNORE INTO hotel_promotions
-          (hotel_id, promotion_code, date_from, date_to, promotion_type, full_data)
+          (hotel_id, promotion_data)
           VALUES ?
         `;
         await pool.query(query, [values]);
@@ -1551,14 +1546,10 @@ export class HotelBedFileRepository {
       const values: any[] = [];
 
       for (const line of lines) {
-        const parts = line.split(':');
-        if (parts.length >= 3) {
+        if (line.trim()) {
           values.push([
             hotelId,
-            parts[0] || null,  // request_code
-            parts[1] || null,  // request_type
-            parts[2] || null,  // description
-            line  // full_data
+            line  // request_data
           ]);
         }
       }
@@ -1566,7 +1557,7 @@ export class HotelBedFileRepository {
       if (values.length > 0) {
         const query = `
           INSERT IGNORE INTO hotel_special_requests
-          (hotel_id, request_code, request_type, description, full_data)
+            (hotel_id, request_data)
           VALUES ?
         `;
         await pool.query(query, [values]);
@@ -1586,13 +1577,10 @@ export class HotelBedFileRepository {
       const values: any[] = [];
 
       for (const line of lines) {
-        const parts = line.split(':');
-        if (parts.length >= 2) {
+        if (line.trim()) {
           values.push([
             hotelId,
-            parts[0] || null,  // group_code
-            parts[1] || null,  // group_name
-            line  // full_data
+            line  // group_data
           ]);
         }
       }
@@ -1600,7 +1588,7 @@ export class HotelBedFileRepository {
       if (values.length > 0) {
         const query = `
           INSERT IGNORE INTO hotel_groups
-          (hotel_id, group_code, group_name, full_data)
+          (hotel_id, group_data)
           VALUES ?
         `;
         await pool.query(query, [values]);
@@ -1975,19 +1963,12 @@ export class HotelBedFileRepository {
   }
 
   /**
-   * Get hotel with ESSENTIAL details (optimized for performance)
+   * Get hotel with COMPLETE details (ALL data, NO limits) - FIXED VERSION
    */
   async getHotelFullDetails(hotelId: number): Promise<any> {
     try {
-      // 1. Get hotel basic info
-      const hotelQuery = `
-        SELECT 
-          id, category, destination_code, chain_code, accommodation_type, 
-          ranking, group_hotel, country_code, state_code, 
-          longitude, latitude, name
-        FROM hotels 
-        WHERE id = ?
-      `;
+      // Step 1: Get hotel basic info
+      const hotelQuery = `SELECT id, category, destination_code, chain_code, accommodation_type, ranking, group_hotel, country_code, state_code, longitude, latitude, name FROM hotels WHERE id = ?`;
       const [hotelRows]: any = await pool.query(hotelQuery, [hotelId]);
       
       if (hotelRows.length === 0) {
@@ -1996,106 +1977,85 @@ export class HotelBedFileRepository {
 
       const hotel = hotelRows[0];
 
-      // ⚡ OPTIMIZED: Parallel queries for speed + Limited data
-      const [
-        [rooms],
-        [rates],
-        [inventory],
-        [contracts],
-        [cancellationPolicies],
-        [supplements],
-        [rateTags]
-      ] = await Promise.all([
-        // Essential: Room allocations (limited to 10 most common)
-        pool.query(`
-          SELECT room_code, board_code, min_adults, max_adults, min_children, max_children, min_pax, max_pax
-          FROM hotel_room_allocations 
-          WHERE hotel_id = ? 
-          ORDER BY room_code
-          LIMIT 10
-        `, [hotelId]),
-        
-        // Essential: Latest rates (limited to 20 most recent)
-        pool.query(`
-          SELECT room_code, board_code, date_from, date_to, rate_type, base_price, tax_amount, adults, price
-          FROM hotel_rates 
-          WHERE hotel_id = ? 
-          ORDER BY date_from DESC
-          LIMIT 20
-        `, [hotelId]),
-        
-        // Essential: Recent inventory (limited to 10)
-        pool.query(`
-          SELECT room_code, board_code, date_from, date_to, availability_data
-          FROM hotel_inventory 
-          WHERE hotel_id = ? 
-          ORDER BY date_from DESC
-          LIMIT 10
-        `, [hotelId]),
-        
-        // Essential: Active contracts (limited to 5 most recent)
-        pool.query(`
-          SELECT destination_code, contract_code, rate_code, board_code, contract_type, date_from, date_to, currency
-          FROM hotel_contracts 
-          WHERE hotel_id = ? 
-          ORDER BY date_from DESC
-          LIMIT 5
-        `, [hotelId]),
-        
-        // Essential: Cancellation policies (limited to 5)
-        pool.query(`
-          SELECT policy_code, date_from, date_to, penalty_type, penalty_amount, cancellation_hours
-          FROM hotel_cancellation_policies 
-          WHERE hotel_id = ? 
-          ORDER BY date_from DESC
-          LIMIT 5
-        `, [hotelId]),
-        
-        // Essential: Supplements/offers (limited to 5)
-        pool.query(`
-          SELECT date_from, date_to, supplement_code, supplement_type, discount_percent, min_nights
-          FROM hotel_supplements 
-          WHERE hotel_id = ?
-          ORDER BY date_from DESC
-          LIMIT 5
-        `, [hotelId]),
-        
-        // Essential: Rate tags (usually small)
-        pool.query(`
-          SELECT tag_id, tag_name
-          FROM hotel_rate_tags 
-          WHERE hotel_id = ?
-          LIMIT 10
-        `, [hotelId])
+      // Step 2: Fetch ALL related data in parallel (17 tables)
+      const results = await Promise.all([
+        pool.query(`SELECT id, room_code, board_code, min_adults, max_adults, min_children, max_children, min_pax, max_pax, allocation FROM hotel_room_allocations WHERE hotel_id = ? ORDER BY room_code`, [hotelId]),
+        pool.query(`SELECT id, room_code, board_code, date_from, date_to, rate_type, base_price, tax_amount, adults, board_type, price FROM hotel_rates WHERE hotel_id = ? ORDER BY date_from DESC`, [hotelId]),
+        pool.query(`SELECT id, room_code, board_code, date_from, date_to, availability_data FROM hotel_inventory WHERE hotel_id = ? ORDER BY date_from DESC`, [hotelId]),
+        pool.query(`SELECT id, destination_code, contract_code, rate_code, board_code, contract_type, date_from, date_to, currency, board_type FROM hotel_contracts WHERE hotel_id = ? ORDER BY date_from DESC`, [hotelId]),
+        pool.query(`SELECT id, policy_code, date_from, date_to, penalty_type, penalty_amount, cancellation_hours, policy_data FROM hotel_cancellation_policies WHERE hotel_id = ? ORDER BY date_from DESC`, [hotelId]),
+        pool.query(`SELECT id, date_from, date_to, supplement_code, supplement_type, discount_percent, min_nights FROM hotel_supplements WHERE hotel_id = ? ORDER BY date_from DESC`, [hotelId]),
+        pool.query(`SELECT id, tag_id, tag_name FROM hotel_rate_tags WHERE hotel_id = ?`, [hotelId]),
+        pool.query(`SELECT id, rule_from, rule_to, is_allowed FROM hotel_occupancy_rules WHERE hotel_id = ?`, [hotelId]),
+        pool.query(`SELECT id, date_from, date_to, notification_type, room_code FROM hotel_email_settings WHERE hotel_id = ?`, [hotelId]),
+        pool.query(`SELECT id, date_from, date_to, criteria_id, flag1, value1, value2, value3, value4, language FROM hotel_configurations WHERE hotel_id = ?`, [hotelId]),
+        pool.query(`SELECT id, promotion_data FROM hotel_promotions WHERE hotel_id = ?`, [hotelId]),
+        pool.query(`SELECT id, request_data FROM hotel_special_requests WHERE hotel_id = ?`, [hotelId]),
+        pool.query(`SELECT id, group_data FROM hotel_groups WHERE hotel_id = ?`, [hotelId]),
+        pool.query(`SELECT id, condition_type, condition_code, condition_text, date_from, date_to FROM hotel_special_conditions WHERE hotel_id = ?`, [hotelId]),
+        pool.query(`SELECT id, room_code, feature_code, feature_type, feature_value FROM hotel_room_features WHERE hotel_id = ? ORDER BY room_code`, [hotelId]),
+        pool.query(`SELECT id, rule_code, rule_type, modifier_type, modifier_value, date_from, date_to, rule_data FROM hotel_pricing_rules WHERE hotel_id = ? ORDER BY date_from DESC`, [hotelId]),
+        pool.query(`SELECT id, tax_type, tax_code, tax_rate, tax_amount, is_included, date_from, date_to, tax_data FROM hotel_tax_info WHERE hotel_id = ?`, [hotelId])
       ]);
 
-      // Combine essential data only
-      const roomsData: any = rooms || [];
-      const ratesData: any = rates || [];
-      const inventoryData: any = inventory || [];
-      const contractsData: any = contracts || [];
-      const cancellationData: any = cancellationPolicies || [];
-      const supplementsData: any = supplements || [];
-      const tagsData: any = rateTags || [];
+      // Extract data from query results (first element is the rows array)
+      const rooms: any = results[0][0];
+      const rates: any = results[1][0];
+      const inventory: any = results[2][0];
+      const contracts: any = results[3][0];
+      const cancellationPolicies: any = results[4][0];
+      const supplements: any = results[5][0];
+      const rateTags: any = results[6][0];
+      const occupancyRules: any = results[7][0];
+      const emailSettings: any = results[8][0];
+      const configurations: any = results[9][0];
+      const promotions: any = results[10][0];
+      const specialRequests: any = results[11][0];
+      const groups: any = results[12][0];
+      const specialConditions: any = results[13][0];
+      const roomFeatures: any = results[14][0];
+      const pricingRules: any = results[15][0];
+      const taxInfo: any = results[16][0];
 
       return {
         ...hotel,
         details: {
-          rooms: roomsData,
-          rates: ratesData,
-          inventory: inventoryData,
-          contracts: contractsData,
-          cancellationPolicies: cancellationData,
-          supplements: supplementsData,
-          rateTags: tagsData
+          rooms: rooms || [],
+          rates: rates || [],
+          inventory: inventory || [],
+          contracts: contracts || [],
+          cancellationPolicies: cancellationPolicies || [],
+          supplements: supplements || [],
+          rateTags: rateTags || [],
+          occupancyRules: occupancyRules || [],
+          emailSettings: emailSettings || [],
+          configurations: configurations || [],
+          promotions: promotions || [],
+          specialRequests: specialRequests || [],
+          groups: groups || [],
+          specialConditions: specialConditions || [],
+          roomFeatures: roomFeatures || [],
+          pricingRules: pricingRules || [],
+          taxInfo: taxInfo || []
         },
         summary: {
-          totalRooms: roomsData.length,
-          totalRates: ratesData.length,
-          totalInventory: inventoryData.length,
-          totalContracts: contractsData.length,
-          hasSupplements: supplementsData.length > 0,
-          hasCancellationPolicies: cancellationData.length > 0
+          totalRooms: (rooms || []).length,
+          totalRates: (rates || []).length,
+          totalInventory: (inventory || []).length,
+          totalContracts: (contracts || []).length,
+          totalCancellationPolicies: (cancellationPolicies || []).length,
+          totalSupplements: (supplements || []).length,
+          totalRateTags: (rateTags || []).length,
+          totalOccupancyRules: (occupancyRules || []).length,
+          totalEmailSettings: (emailSettings || []).length,
+          totalConfigurations: (configurations || []).length,
+          totalPromotions: (promotions || []).length,
+          totalSpecialRequests: (specialRequests || []).length,
+          totalGroups: (groups || []).length,
+          totalSpecialConditions: (specialConditions || []).length,
+          totalRoomFeatures: (roomFeatures || []).length,
+          totalPricingRules: (pricingRules || []).length,
+          totalTaxInfo: (taxInfo || []).length
         }
       };
     } catch (error: any) {
@@ -2208,4 +2168,576 @@ export class HotelBedFileRepository {
       throw error;
     }
   }
+
+  /**
+   * ⚡ LOCK-FREE APPROACH - Use READ UNCOMMITTED to bypass locks
+   */
+  async computeCheapestPrices(category: string = 'ALL', hotelId?: number): Promise<any> {
+    const start = Date.now();
+    
+    Logger.info('⚡ START');
+    await this.createCheapestPPTable();
+
+    const cats = category === 'ALL' ? ['CITY_TRIP', 'OTHER'] : [category];
+    
+    try {
+      // Clean old data first
+      Logger.info('🗑️  Cleaning old prices...');
+      if (hotelId) {
+        await pool.query(`DELETE FROM cheapest_pp WHERE hotel_id = ${hotelId}`);
+        Logger.info(`   ✅ Cleaned prices for hotel ${hotelId}`);
+      } else {
+        await pool.query('TRUNCATE TABLE cheapest_pp');
+        Logger.info('   ✅ All old prices cleaned');
+      }
+      
+      // BYPASS LOCKS + FK checks
+      await pool.query('SET SESSION TRANSACTION ISOLATION LEVEL READ UNCOMMITTED');
+      await pool.query('SET FOREIGN_KEY_CHECKS = 0');
+      
+      Logger.info('Computing...');
+      let total = 0;
+      
+      for (const cat of cats) {
+        const n = cat === 'CITY_TRIP' ? 2 : 5;
+        Logger.info(`${cat}...`);
+        
+        // Only select hotels that exist in hotels table (FK safe!)
+        const [res]: any = await pool.query(`
+          INSERT INTO cheapest_pp 
+          (hotel_id, category_tag, start_date, nights, board_code, room_code, price_pp, total_price, currency, has_promotion)
+          SELECT r.hotel_id, '${cat}', MIN(r.date_from), ${n}, 'RO', 'STD',
+                 ROUND(MIN(r.price) * ${n} / 2, 2), ROUND(MIN(r.price) * ${n}, 2), 'EUR', 0
+          FROM hotel_rates r
+          INNER JOIN hotels h ON h.id = r.hotel_id
+          WHERE r.price > 0
+          ${hotelId ? `AND r.hotel_id = ${hotelId}` : ''}
+          GROUP BY r.hotel_id
+          ON DUPLICATE KEY UPDATE 
+            price_pp = VALUES(price_pp), 
+            total_price = VALUES(total_price), 
+            derived_at = NOW()
+        `);
+        
+        total += res.affectedRows || 0;
+        Logger.info(`✅ ${cat}: ${res.affectedRows}`);
+      }
+
+      // Restore settings
+      await pool.query('SET SESSION TRANSACTION ISOLATION LEVEL REPEATABLE READ');
+      await pool.query('SET FOREIGN_KEY_CHECKS = 1');
+
+      const dur = ((Date.now() - start) / 1000).toFixed(2);
+      Logger.info(`✅ ${total} prices | ${dur}s`);
+
+      return { success: true, computed: total, duration: `${dur}s` };
+    } catch (error: any) {
+      await pool.query('SET SESSION TRANSACTION ISOLATION LEVEL REPEATABLE READ').catch(() => {});
+      await pool.query('SET FOREIGN_KEY_CHECKS = 1').catch(() => {});
+      Logger.error('❌ Failed:', error);
+      throw error;
+    }
+  }
+
+
+  /**
+   * Get available rooms for a hotel with dates and rates
+   */
+  async getAvailableRooms(hotelId: number, checkIn?: string, nights?: number, page: number = 1, limit: number = 10, maxDates: number = 10): Promise<any> {
+    try {
+      Logger.info('[REPO] Getting available rooms:', { hotelId, checkIn, nights, page, limit, maxDates });
+      
+      // Build date filter with SQL date functions
+      let dateFilter = '';
+      const params: any[] = [hotelId];
+
+      if (checkIn && nights) {
+        dateFilter = `AND r.date_from >= ? AND r.date_from < DATE_ADD(?, INTERVAL ? DAY)`;
+        params.push(checkIn, checkIn, nights);
+      }
+
+      // First, get total count of unique rooms
+      const countQuery = `
+        SELECT COUNT(DISTINCT r.room_code) as total
+        FROM hotel_rates r
+        WHERE r.hotel_id = ? 
+          AND r.price > 0
+          ${dateFilter}
+      `;
+      const [countResult]: any = await pool.query(countQuery, params);
+      const total = countResult[0].total;
+
+      // Calculate pagination
+      const offset = (page - 1) * limit;
+      const totalPages = Math.ceil(total / limit);
+
+      // Get paginated room_codes first (separate query to avoid MySQL LIMIT in subquery issue)
+      const roomCodesQuery = `
+        SELECT DISTINCT r.room_code 
+        FROM hotel_rates r
+        WHERE r.hotel_id = ? 
+          AND r.price > 0
+          ${dateFilter}
+        ORDER BY r.room_code
+        LIMIT ? OFFSET ?
+      `;
+      
+      const [roomCodeResults]: any = await pool.query(roomCodesQuery, [...params, limit, offset]);
+      
+      if (roomCodeResults.length === 0) {
+        Logger.info('[REPO] No rooms found for pagination', { page, limit });
+        return {
+          data: [],
+          pagination: {
+            page,
+            limit,
+            total,
+            totalPages
+          },
+          settings: {
+            maxDatesPerRoom: maxDates
+          }
+        };
+      }
+      
+      const roomCodes = roomCodeResults.map((r: any) => r.room_code);
+      
+      // Now get all data for these room codes
+      const query = `
+        SELECT 
+          r.room_code,
+          r.board_code,
+          DATE_FORMAT(r.date_from, '%Y-%m-%d') as date_from,
+          r.date_to,
+          r.price,
+          r.adults,
+          ra.min_adults,
+          ra.max_adults,
+          ra.min_children,
+          ra.max_children
+        FROM hotel_rates r
+        LEFT JOIN hotel_room_allocations ra ON ra.hotel_id = r.hotel_id AND ra.room_code = r.room_code
+        WHERE r.hotel_id = ? 
+          AND r.price > 0
+          ${dateFilter}
+          AND r.room_code IN (${roomCodes.map(() => '?').join(',')})
+        ORDER BY r.room_code, r.date_from, r.price
+      `;
+
+      const queryParams = [...params, ...roomCodes];
+      const [rooms]: any = await pool.query(query, queryParams);
+      
+      Logger.info('[REPO] Rooms data fetched:', { 
+        totalRecords: rooms.length,
+        totalUniqueRooms: total,
+        page,
+        sampleDates: rooms.slice(0, 3).map((r: any) => r.date_from)
+      });
+
+      // Group by room_code and date (to avoid duplicates)
+      const roomsMap = new Map();
+      
+      for (const room of rooms) {
+        if (!roomsMap.has(room.room_code)) {
+          roomsMap.set(room.room_code, {
+            roomCode: room.room_code,
+            boardCode: room.board_code,
+            minAdults: room.min_adults,
+            maxAdults: room.max_adults,
+            minChildren: room.min_children,
+            maxChildren: room.max_children,
+            datesMap: new Map(), // Use Map to group by date
+            priceRange: { min: parseFloat(room.price), max: parseFloat(room.price) }
+          });
+        }
+        
+        const roomData = roomsMap.get(room.room_code);
+        const price = parseFloat(room.price);
+        const dateKey = room.date_from;
+        
+        // Group by date - keep the cheapest price for each date
+        if (!roomData.datesMap.has(dateKey)) {
+          roomData.datesMap.set(dateKey, {
+            date: dateKey,
+            price: price,
+            adults: room.adults,
+            boardCode: room.board_code,
+            variants: 1 // Count how many variants exist
+          });
+        } else {
+          // If date already exists, keep the cheaper price
+          const existing = roomData.datesMap.get(dateKey);
+          if (price < existing.price) {
+            existing.price = price;
+            existing.boardCode = room.board_code;
+            existing.adults = room.adults;
+          }
+          existing.variants++; // Increment variant count
+        }
+        
+        // Update price range
+        if (price < roomData.priceRange.min) roomData.priceRange.min = price;
+        if (price > roomData.priceRange.max) roomData.priceRange.max = price;
+      }
+
+      // Limit dates per room and add summary
+      const roomsArray = Array.from(roomsMap.values()).map(room => {
+        // Convert datesMap to sorted array
+        const allDates = Array.from(room.datesMap.values()).sort((a:any, b:any) => 
+          new Date(a.date).getTime() - new Date(b.date).getTime()
+        );
+        
+        const totalDatesCount = allDates.length;
+        const limitedDates = allDates.slice(0, maxDates);
+        
+        return {
+          roomCode: room.roomCode,
+          boardCode: room.boardCode,
+          minAdults: room.minAdults,
+          maxAdults: room.maxAdults,
+          minChildren: room.minChildren,
+          maxChildren: room.maxChildren,
+          availableDates: limitedDates,
+          totalAvailableDates: totalDatesCount, // Total unique dates
+          showingDates: limitedDates.length,    // Showing count
+          priceRange: room.priceRange
+        };
+      });
+      
+      Logger.info('[REPO] Available rooms result:', { 
+        roomsInPage: roomsArray.length,
+        totalRooms: total,
+        page,
+        totalPages,
+        maxDatesPerRoom: maxDates,
+        rooms: roomsArray.map(r => ({ 
+          room: r.roomCode, 
+          totalDates: r.totalAvailableDates,
+          showing: r.showingDates
+        }))
+      });
+
+      return {
+        data: roomsArray,
+        pagination: {
+          page,
+          limit,
+          total,
+          totalPages
+        },
+        settings: {
+          maxDatesPerRoom: maxDates
+        }
+      };
+    } catch (error: any) {
+      Logger.error('[REPO] Error getting available rooms', { error: error.message });
+      throw error;
+    }
+  }
+
+  /**
+   * Check availability - Get all available rooms for dates with pricing
+   */
+  async checkAvailability(hotelId: number, checkIn: string, nights: number, roomCodeFilter?: string): Promise<any> {
+    try {
+      const checkInDate = new Date(checkIn);
+      const checkOutDate = new Date(checkIn);
+      checkOutDate.setDate(checkOutDate.getDate() + nights);
+      const checkOut = checkOutDate.toISOString().split('T')[0];
+
+      // Get all rates in date range (will filter by exact dates later)
+      const roomFilter = roomCodeFilter ? `AND room_code = '${roomCodeFilter}'` : '';
+      
+      // Fetch rates using raw SQL date comparison
+      const [rates]: any = await pool.query(`
+        SELECT 
+          room_code,
+          DATE_FORMAT(date_from, '%Y-%m-%d') as date_from,
+          price,
+          board_code,
+          adults
+        FROM hotel_rates
+        WHERE hotel_id = ?
+          AND date_from >= ?
+          AND date_from < DATE_ADD(?, INTERVAL ? DAY)
+          AND price > 0
+          ${roomFilter}
+        ORDER BY room_code, date_from
+      `, [hotelId, checkIn, checkIn, nights]);
+      
+      Logger.info('[REPO] Rates fetched:', { 
+        count: rates.length,
+        sampleDates: rates.slice(0, 5).map((r: any) => ({
+          room: r.room_code,
+          date: r.date_from
+        }))
+      });
+
+      if (!rates || rates.length === 0) {
+        return {
+          hotelId,
+          checkIn,
+          checkOut,
+          nights,
+          rooms: [],
+          message: 'No rooms available for selected dates'
+        };
+      }
+
+      // Build expected dates list
+      const expectedDates: string[] = [];
+      for (let i = 0; i < nights; i++) {
+        const d = new Date(checkIn);
+        d.setDate(d.getDate() + i);
+        expectedDates.push(d.toISOString().split('T')[0]);
+      }
+      
+      Logger.info('[REPO] Expected dates:', { dates: expectedDates });
+
+      // Group by room_code and collect rates
+      const roomsMap = new Map();
+
+      for (const rate of rates) {
+        const dateStr = rate.date_from; // Already formatted as YYYY-MM-DD from SQL
+        
+        if (!roomsMap.has(rate.room_code)) {
+          roomsMap.set(rate.room_code, {
+            roomCode: rate.room_code,
+            boardCode: rate.board_code,
+            rates: [],
+            totalPrice: 0,
+            datesFound: new Set()
+          });
+        }
+        
+        const roomData = roomsMap.get(rate.room_code);
+        
+        // Avoid duplicates
+        if (!roomData.datesFound.has(dateStr)) {
+          roomData.datesFound.add(dateStr);
+          roomData.rates.push({
+            date: dateStr,
+            price: parseFloat(rate.price),
+            board: rate.board_code,
+            adults: rate.adults
+          });
+          roomData.totalPrice += parseFloat(rate.price);
+        }
+      }
+      
+      // Get unique dates found in rates
+      const allDatesFound = new Set<string>();
+      roomsMap.forEach(room => {
+        room.datesFound.forEach((date: string) => allDatesFound.add(date));
+      });
+      
+      Logger.info('[REPO] Rooms analysis:', { 
+        totalRooms: roomsMap.size,
+        rooms: Array.from(roomsMap.keys()),
+        uniqueDatesInRates: Array.from(allDatesFound).sort(),
+        expectedDates: expectedDates
+      });
+      
+      // Filter rooms that have ALL required nights
+      const completeRooms = Array.from(roomsMap.values()).filter(room => {
+        const hasAllNights = room.datesFound.size === nights;
+        if (!hasAllNights) {
+          Logger.info('[REPO] Room incomplete:', { 
+            roomCode: room.roomCode,
+            datesFound: Array.from(room.datesFound).sort(),
+            missingDates: expectedDates.filter(d => !room.datesFound.has(d)),
+            required: nights
+          });
+        }
+        return hasAllNights;
+      });
+
+      // Get room allocations for capacity info
+      if (completeRooms.length === 0) {
+        return {
+          hotelId,
+          checkIn,
+          checkOut,
+          nights,
+          rooms: [],
+          message: `No rooms available with complete ${nights} consecutive nights`
+        };
+      }
+
+      const roomCodes = completeRooms.map(r => r.roomCode);
+      const [allocations]: any = await pool.query(`
+        SELECT room_code, min_adults, max_adults, min_children, max_children
+        FROM hotel_room_allocations
+        WHERE hotel_id = ?
+          AND room_code IN (${roomCodes.map(r => `'${r}'`).join(',')})
+        GROUP BY room_code
+      `, [hotelId]);
+
+      const allocMap = new Map(
+        allocations.map((a: any) => [a.room_code, {
+          minAdults: a.min_adults,
+          maxAdults: a.max_adults,
+          minChildren: a.min_children,
+          maxChildren: a.max_children
+        }])
+      );
+
+      // Build final response with only complete rooms
+      const availableRooms = completeRooms.map(room => ({
+        roomCode: room.roomCode,
+        boardCode: room.boardCode,
+        totalPrice: parseFloat(room.totalPrice.toFixed(2)),
+        pricePerPerson: parseFloat((room.totalPrice / 2).toFixed(2)),
+        currency: 'EUR',
+        nightlyRates: room.rates.sort((a: any, b: any) => 
+          new Date(a.date).getTime() - new Date(b.date).getTime()
+        ),
+        capacity: allocMap.get(room.roomCode) || null
+      }));
+
+      return {
+        hotelId,
+        checkIn,
+        checkOut,
+        nights,
+        totalRooms: availableRooms.length,
+        rooms: availableRooms
+      };
+    } catch (error: any) {
+      Logger.error('[REPO] Error checking availability', { error: error.message });
+      throw error;
+    }
+  }
+
+  /**
+   * Search hotels with cheapest prices (per document spec)
+   */
+  async searchHotels(filters: any, sort: string, page: number, limit: number): Promise<any> {
+    try {
+      // Build WHERE clause
+      const conditions: string[] = [];
+      const params: any[] = [];
+
+      if (filters.destination) {
+        conditions.push('h.destination_code = ?');
+        params.push(filters.destination);
+      }
+
+      if (filters.category) {
+        conditions.push('cp.category_tag = ?');
+        params.push(filters.category);
+      }
+
+      if (filters.name) {
+        conditions.push('h.name LIKE ?');
+        params.push(`%${filters.name}%`);
+      }
+
+      if (filters.priceMin !== undefined) {
+        conditions.push('cp.price_pp >= ?');
+        params.push(filters.priceMin);
+      }
+
+      if (filters.priceMax !== undefined) {
+        conditions.push('cp.price_pp <= ?');
+        params.push(filters.priceMax);
+      }
+
+      const whereClause = conditions.length > 0 ? 'WHERE ' + conditions.join(' AND ') : '';
+
+      // Build ORDER BY
+      const sortMap: any = {
+        price_asc: 'cp.price_pp ASC',
+        price_desc: 'cp.price_pp DESC',
+        name_asc: 'h.name ASC',
+        name_desc: 'h.name DESC'
+      };
+      const orderBy = sortMap[sort] || 'cp.price_pp ASC';
+
+      // Count total
+      const countQuery = `
+        SELECT COUNT(*) as total
+        FROM cheapest_pp cp
+        INNER JOIN hotels h ON h.id = cp.hotel_id
+        ${whereClause}
+      `;
+      const [countResult]: any = await pool.query(countQuery, params);
+      const total = countResult[0].total;
+
+      // Get paginated data
+      const offset = (page - 1) * limit;
+      const dataQuery = `
+        SELECT 
+          h.id as hotelId,
+          h.name,
+          cp.price_pp as fromPricePP,
+          cp.currency,
+          cp.board_code as board,
+          cp.start_date as startDate,
+          cp.nights,
+          cp.category_tag as category,
+          h.destination_code as destination,
+          h.country_code as country
+        FROM cheapest_pp cp
+        INNER JOIN hotels h ON h.id = cp.hotel_id
+        ${whereClause}
+        ORDER BY ${orderBy}
+        LIMIT ? OFFSET ?
+      `;
+      
+      const [rows]: any = await pool.query(dataQuery, [...params, limit, offset]);
+
+      return {
+        data: rows,
+        pagination: {
+          page,
+          limit,
+          total,
+          totalPages: Math.ceil(total / limit),
+          hasNext: page < Math.ceil(total / limit),
+          hasPrev: page > 1
+        }
+      };
+    } catch (error: any) {
+      Logger.error('[REPO] Search error', { error: error.message });
+      throw error;
+    }
+  }
+
+  /**
+   * Create cheapest_pp table if not exists
+   */
+  private async createCheapestPPTable(): Promise<void> {
+    try {
+      const createTableQuery = `
+        CREATE TABLE IF NOT EXISTS cheapest_pp (
+          id BIGINT AUTO_INCREMENT PRIMARY KEY,
+          hotel_id BIGINT NOT NULL,
+          category_tag VARCHAR(20) DEFAULT 'CITY_TRIP',
+          start_date DATE NOT NULL,
+          nights INT NOT NULL,
+          board_code VARCHAR(10),
+          room_code VARCHAR(50),
+          price_pp DECIMAL(10, 2) NOT NULL,
+          total_price DECIMAL(10, 2) NOT NULL,
+          currency VARCHAR(5) DEFAULT 'EUR',
+          has_promotion BOOLEAN DEFAULT FALSE,
+          derived_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+          updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+          INDEX idx_hotel_category (hotel_id, category_tag),
+          INDEX idx_category_price (category_tag, price_pp),
+          INDEX idx_start_date (start_date),
+          UNIQUE KEY uk_hotel_category (hotel_id, category_tag)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+      `;
+      
+      await pool.query(createTableQuery);
+      Logger.info('[REPO] cheapest_pp table ensured');
+    } catch (error: any) {
+      Logger.error('[REPO] Failed to create cheapest_pp table', { error: error.message });
+      throw error;
+    }
+  }
+
 }
+
