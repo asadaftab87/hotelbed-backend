@@ -1,0 +1,436 @@
+-- HotelBeds Complete Data Schema
+-- All tables for complete cache import
+
+-- ============================================
+-- HOTELS TABLE (Basic Info - GHOT_F)
+-- ============================================
+CREATE TABLE IF NOT EXISTS `hotels` (
+  `id` BIGINT PRIMARY KEY,
+  `category` VARCHAR(10),
+  `destination_code` VARCHAR(10),
+  `chain_code` VARCHAR(50),
+  `accommodation_type` VARCHAR(10),
+  `ranking` INT,
+  `group_hotel` VARCHAR(5),
+  `country_code` VARCHAR(5),
+  `state_code` VARCHAR(10),
+  `longitude` DECIMAL(11, 8),
+  `latitude` DECIMAL(11, 8),
+  `name` VARCHAR(500),
+  `created_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  `updated_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  INDEX `idx_destination` (`destination_code`),
+  INDEX `idx_country` (`country_code`),
+  INDEX `idx_chain` (`chain_code`),
+  INDEX `idx_name` (`name`(255)),
+  INDEX `idx_location` (`latitude`, `longitude`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- ============================================
+-- CATEGORIES TABLE (GCAT_F)
+-- ============================================
+CREATE TABLE IF NOT EXISTS `categories` (
+  `id` INT AUTO_INCREMENT PRIMARY KEY,
+  `code` VARCHAR(50) UNIQUE,
+  `type` VARCHAR(50),
+  `simple_code` VARCHAR(10),
+  `description` VARCHAR(255),
+  `created_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  INDEX `idx_code` (`code`),
+  INDEX `idx_type` (`type`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- ============================================
+-- CHAINS TABLE (GTTO_F)
+-- ============================================
+CREATE TABLE IF NOT EXISTS `chains` (
+  `id` INT AUTO_INCREMENT PRIMARY KEY,
+  `code` VARCHAR(50) UNIQUE,
+  `name` VARCHAR(255),
+  `created_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  INDEX `idx_code` (`code`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- ============================================
+-- DESTINATIONS TABLE (IDES_F) - UPDATED WITH NAME
+-- ============================================
+CREATE TABLE IF NOT EXISTS `destinations` (
+  `id` INT AUTO_INCREMENT PRIMARY KEY,
+  `code` VARCHAR(10) UNIQUE,
+  `country_code` VARCHAR(5),
+  `is_available` CHAR(1),
+  `name` VARCHAR(255),
+  `created_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  `updated_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  INDEX `idx_code` (`code`),
+  INDEX `idx_country` (`country_code`),
+  INDEX `idx_available` (`is_available`),
+  INDEX `idx_name` (`name`(100))
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- ============================================
+-- HOTEL CONTRACTS (CCON - Contract Config)
+-- ============================================
+CREATE TABLE IF NOT EXISTS `hotel_contracts` (
+  `id` BIGINT AUTO_INCREMENT PRIMARY KEY,
+  `hotel_id` BIGINT,
+  `destination_code` VARCHAR(10),
+  `contract_code` VARCHAR(50),
+  `rate_code` VARCHAR(50),
+  `board_code` VARCHAR(10),
+  `contract_type` VARCHAR(10),
+  `date_from` DATE,
+  `date_to` DATE,
+  `currency` VARCHAR(5),
+  `board_type` VARCHAR(10),
+  `payment_type` VARCHAR(10),
+  `market` VARCHAR(5),
+  `is_active` CHAR(1),
+  `created_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  INDEX `idx_hotel` (`hotel_id`),
+  INDEX `idx_destination` (`destination_code`),
+  INDEX `idx_dates` (`date_from`, `date_to`),
+  INDEX `idx_contract` (`contract_code`),
+  FOREIGN KEY (`hotel_id`) REFERENCES `hotels`(`id`) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- ============================================
+-- HOTEL ROOM ALLOCATIONS (CNHA)
+-- ============================================
+CREATE TABLE IF NOT EXISTS `hotel_room_allocations` (
+  `id` BIGINT AUTO_INCREMENT PRIMARY KEY,
+  `hotel_id` BIGINT,
+  `room_code` VARCHAR(50),
+  `board_code` VARCHAR(10),
+  `min_adults` INT,
+  `max_adults` INT,
+  `min_children` INT,
+  `max_children` INT,
+  `min_pax` INT,
+  `max_pax` INT,
+  `allocation` INT,
+  `created_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  INDEX `idx_hotel` (`hotel_id`),
+  INDEX `idx_room` (`room_code`),
+  INDEX `idx_pax` (`min_adults`, `max_adults`),
+  FOREIGN KEY (`hotel_id`) REFERENCES `hotels`(`id`) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- ============================================
+-- HOTEL INVENTORY (CNIN - Daily Availability)
+-- ============================================
+CREATE TABLE IF NOT EXISTS `hotel_inventory` (
+  `id` BIGINT AUTO_INCREMENT PRIMARY KEY,
+  `hotel_id` BIGINT,
+  `room_code` VARCHAR(50),
+  `board_code` VARCHAR(10),
+  `date_from` DATE,
+  `date_to` DATE,
+  `availability_data` TEXT,
+  `created_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  INDEX `idx_hotel` (`hotel_id`),
+  INDEX `idx_room` (`room_code`),
+  INDEX `idx_dates` (`date_from`, `date_to`),
+  FOREIGN KEY (`hotel_id`) REFERENCES `hotels`(`id`) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- ============================================
+-- HOTEL RATES (CNCT - Pricing Data)
+-- ============================================
+CREATE TABLE IF NOT EXISTS `hotel_rates` (
+  `id` BIGINT AUTO_INCREMENT PRIMARY KEY,
+  `hotel_id` BIGINT,
+  `room_code` VARCHAR(50),
+  `board_code` VARCHAR(10),
+  `date_from` DATE,
+  `date_to` DATE,
+  `rate_type` VARCHAR(10),
+  `base_price` DECIMAL(10, 3),
+  `tax_amount` DECIMAL(10, 3),
+  `commission` DECIMAL(10, 3),
+  `adults` INT,
+  `board_type` VARCHAR(10),
+  `price` DECIMAL(10, 3),
+  `currency` VARCHAR(5),
+  `created_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  INDEX `idx_hotel` (`hotel_id`),
+  INDEX `idx_room` (`room_code`),
+  INDEX `idx_dates` (`date_from`, `date_to`),
+  INDEX `idx_price` (`price`),
+  FOREIGN KEY (`hotel_id`) REFERENCES `hotels`(`id`) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- ============================================
+-- HOTEL SUPPLEMENTS (CNSU - Offers/Discounts)
+-- ============================================
+CREATE TABLE IF NOT EXISTS `hotel_supplements` (
+  `id` BIGINT AUTO_INCREMENT PRIMARY KEY,
+  `hotel_id` BIGINT,
+  `date_from` DATE,
+  `date_to` DATE,
+  `supplement_code` VARCHAR(50),
+  `supplement_type` VARCHAR(10),
+  `discount_percent` DECIMAL(5, 2),
+  `min_nights` INT,
+  `applies_to` VARCHAR(20),
+  `created_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  INDEX `idx_hotel` (`hotel_id`),
+  INDEX `idx_dates` (`date_from`, `date_to`),
+  INDEX `idx_code` (`supplement_code`),
+  FOREIGN KEY (`hotel_id`) REFERENCES `hotels`(`id`) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- ============================================
+-- HOTEL OCCUPANCY RULES (CNOE)
+-- ============================================
+CREATE TABLE IF NOT EXISTS `hotel_occupancy_rules` (
+  `id` BIGINT AUTO_INCREMENT PRIMARY KEY,
+  `hotel_id` BIGINT,
+  `rule_from` VARCHAR(50),
+  `rule_to` VARCHAR(50),
+  `is_allowed` CHAR(1),
+  `created_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  INDEX `idx_hotel` (`hotel_id`),
+  FOREIGN KEY (`hotel_id`) REFERENCES `hotels`(`id`) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- ============================================
+-- HOTEL EMAIL SETTINGS (CNEM)
+-- ============================================
+CREATE TABLE IF NOT EXISTS `hotel_email_settings` (
+  `id` BIGINT AUTO_INCREMENT PRIMARY KEY,
+  `hotel_id` BIGINT,
+  `date_from` DATE,
+  `date_to` DATE,
+  `notification_type` VARCHAR(10),
+  `room_code` VARCHAR(50),
+  `board_code` VARCHAR(10),
+  `min_pax` INT,
+  `max_pax` INT,
+  `settings_flags` VARCHAR(255),
+  `created_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  INDEX `idx_hotel` (`hotel_id`),
+  FOREIGN KEY (`hotel_id`) REFERENCES `hotels`(`id`) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- ============================================
+-- HOTEL RATE TAGS (CNTA)
+-- ============================================
+CREATE TABLE IF NOT EXISTS `hotel_rate_tags` (
+  `id` BIGINT AUTO_INCREMENT PRIMARY KEY,
+  `hotel_id` BIGINT,
+  `tag_id` INT,
+  `tag_name` VARCHAR(100),
+  `created_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  INDEX `idx_hotel` (`hotel_id`),
+  INDEX `idx_tag` (`tag_name`),
+  FOREIGN KEY (`hotel_id`) REFERENCES `hotels`(`id`) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- ============================================
+-- HOTEL SPECIAL REQUESTS (CNSR)
+-- ============================================
+CREATE TABLE IF NOT EXISTS `hotel_special_requests` (
+  `id` BIGINT AUTO_INCREMENT PRIMARY KEY,
+  `hotel_id` BIGINT,
+  `request_data` TEXT,
+  `created_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  INDEX `idx_hotel` (`hotel_id`),
+  FOREIGN KEY (`hotel_id`) REFERENCES `hotels`(`id`) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- ============================================
+-- HOTEL PROMOTIONS (CNPV)
+-- ============================================
+CREATE TABLE IF NOT EXISTS `hotel_promotions` (
+  `id` BIGINT AUTO_INCREMENT PRIMARY KEY,
+  `hotel_id` BIGINT,
+  `promotion_data` TEXT,
+  `created_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  INDEX `idx_hotel` (`hotel_id`),
+  FOREIGN KEY (`hotel_id`) REFERENCES `hotels`(`id`) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- ============================================
+-- HOTEL GROUPS (CNGR)
+-- ============================================
+CREATE TABLE IF NOT EXISTS `hotel_groups` (
+  `id` BIGINT AUTO_INCREMENT PRIMARY KEY,
+  `hotel_id` BIGINT,
+  `group_data` TEXT,
+  `created_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  INDEX `idx_hotel` (`hotel_id`),
+  FOREIGN KEY (`hotel_id`) REFERENCES `hotels`(`id`) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- ============================================
+-- IMPORT LOGS TABLE
+-- ============================================
+CREATE TABLE IF NOT EXISTS `import_logs` (
+  `id` INT AUTO_INCREMENT PRIMARY KEY,
+  `file_name` VARCHAR(255),
+  `file_type` VARCHAR(50),
+  `total_records` INT DEFAULT 0,
+  `imported_records` INT DEFAULT 0,
+  `failed_records` INT DEFAULT 0,
+  `status` ENUM('started', 'in_progress', 'completed', 'failed') DEFAULT 'started',
+  `duration` VARCHAR(20),
+  `error_message` TEXT,
+  `started_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  `completed_at` TIMESTAMP NULL,
+  INDEX `idx_file` (`file_name`(100)),
+  INDEX `idx_status` (`status`),
+  INDEX `idx_type` (`file_type`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- ============================================
+-- PROCESSING QUEUE (for tracking 150k+ files)
+-- ============================================
+CREATE TABLE IF NOT EXISTS `processing_queue` (
+  `id` BIGINT AUTO_INCREMENT PRIMARY KEY,
+  `hotel_id` BIGINT,
+  `file_path` VARCHAR(500),
+  `status` ENUM('pending', 'processing', 'completed', 'failed') DEFAULT 'pending',
+  `attempts` INT DEFAULT 0,
+  `error_message` TEXT,
+  `created_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  `processed_at` TIMESTAMP NULL,
+  INDEX `idx_status` (`status`),
+  INDEX `idx_hotel` (`hotel_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- ============================================
+-- API METADATA TABLE (AIF2_F)
+-- ============================================
+CREATE TABLE IF NOT EXISTS `api_metadata` (
+  `id` INT AUTO_INCREMENT PRIMARY KEY,
+  `api_version` VARCHAR(10),
+  `total_hotels` INT,
+  `environment` VARCHAR(10),
+  `region` VARCHAR(10),
+  `country` VARCHAR(5),
+  `api_type` VARCHAR(10),
+  `is_active` CHAR(1),
+  `timestamp` BIGINT,
+  `next_api_version` VARCHAR(10),
+  `features` TEXT,
+  `created_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  INDEX `idx_version` (`api_version`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- ============================================
+-- HOTEL CONFIGURATIONS (CNCF)
+-- ============================================
+CREATE TABLE IF NOT EXISTS `hotel_configurations` (
+  `id` BIGINT AUTO_INCREMENT PRIMARY KEY,
+  `hotel_id` BIGINT,
+  `date_from` DATE,
+  `date_to` DATE,
+  `criteria_id` INT,
+  `flag1` INT,
+  `value1` DECIMAL(10, 3),
+  `value2` DECIMAL(10, 3),
+  `value3` DECIMAL(10, 3),
+  `value4` DECIMAL(10, 3),
+  `language` VARCHAR(5),
+  `created_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  INDEX `idx_hotel` (`hotel_id`),
+  INDEX `idx_dates` (`date_from`, `date_to`),
+  INDEX `idx_criteria` (`criteria_id`),
+  FOREIGN KEY (`hotel_id`) REFERENCES `hotels`(`id`) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- ============================================
+-- HOTEL CANCELLATION POLICIES (CNCL)
+-- ============================================
+CREATE TABLE IF NOT EXISTS `hotel_cancellation_policies` (
+  `id` BIGINT AUTO_INCREMENT PRIMARY KEY,
+  `hotel_id` BIGINT,
+  `policy_code` VARCHAR(50),
+  `date_from` DATE,
+  `date_to` DATE,
+  `penalty_type` VARCHAR(20),
+  `penalty_amount` DECIMAL(10, 2),
+  `cancellation_hours` INT,
+  `policy_data` TEXT,
+  `created_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  INDEX `idx_hotel` (`hotel_id`),
+  INDEX `idx_dates` (`date_from`, `date_to`),
+  INDEX `idx_policy` (`policy_code`),
+  FOREIGN KEY (`hotel_id`) REFERENCES `hotels`(`id`) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- ============================================
+-- HOTEL SPECIAL CONDITIONS (CNES)
+-- ============================================
+CREATE TABLE IF NOT EXISTS `hotel_special_conditions` (
+  `id` BIGINT AUTO_INCREMENT PRIMARY KEY,
+  `hotel_id` BIGINT,
+  `condition_type` VARCHAR(50),
+  `condition_code` VARCHAR(50),
+  `condition_text` TEXT,
+  `date_from` DATE,
+  `date_to` DATE,
+  `created_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  INDEX `idx_hotel` (`hotel_id`),
+  INDEX `idx_type` (`condition_type`),
+  FOREIGN KEY (`hotel_id`) REFERENCES `hotels`(`id`) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- ============================================
+-- HOTEL ROOM FEATURES (CNHF)
+-- ============================================
+CREATE TABLE IF NOT EXISTS `hotel_room_features` (
+  `id` BIGINT AUTO_INCREMENT PRIMARY KEY,
+  `hotel_id` BIGINT,
+  `room_code` VARCHAR(50),
+  `feature_code` VARCHAR(50),
+  `feature_type` VARCHAR(50),
+  `feature_value` VARCHAR(255),
+  `created_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  INDEX `idx_hotel` (`hotel_id`),
+  INDEX `idx_room` (`room_code`),
+  INDEX `idx_feature` (`feature_code`),
+  FOREIGN KEY (`hotel_id`) REFERENCES `hotels`(`id`) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- ============================================
+-- HOTEL PRICING RULES (CNPR)
+-- ============================================
+CREATE TABLE IF NOT EXISTS `hotel_pricing_rules` (
+  `id` BIGINT AUTO_INCREMENT PRIMARY KEY,
+  `hotel_id` BIGINT,
+  `rule_code` VARCHAR(50),
+  `rule_type` VARCHAR(50),
+  `modifier_type` VARCHAR(20),
+  `modifier_value` DECIMAL(10, 3),
+  `date_from` DATE,
+  `date_to` DATE,
+  `rule_data` TEXT,
+  `created_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  INDEX `idx_hotel` (`hotel_id`),
+  INDEX `idx_dates` (`date_from`, `date_to`),
+  INDEX `idx_rule` (`rule_code`),
+  FOREIGN KEY (`hotel_id`) REFERENCES `hotels`(`id`) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- ============================================
+-- HOTEL TAX INFORMATION (ATAX)
+-- ============================================
+CREATE TABLE IF NOT EXISTS `hotel_tax_info` (
+  `id` BIGINT AUTO_INCREMENT PRIMARY KEY,
+  `hotel_id` BIGINT,
+  `tax_type` VARCHAR(50),
+  `tax_code` VARCHAR(50),
+  `tax_rate` DECIMAL(5, 2),
+  `tax_amount` DECIMAL(10, 2),
+  `is_included` CHAR(1),
+  `date_from` DATE,
+  `date_to` DATE,
+  `tax_data` TEXT,
+  `created_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  INDEX `idx_hotel` (`hotel_id`),
+  INDEX `idx_tax_type` (`tax_type`),
+  FOREIGN KEY (`hotel_id`) REFERENCES `hotels`(`id`) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+

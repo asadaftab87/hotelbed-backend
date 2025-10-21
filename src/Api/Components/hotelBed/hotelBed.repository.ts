@@ -1,995 +1,1840 @@
-import fs from "fs";
-import path from "path";
-import { randomUUID } from "crypto";
-import AdmZip from "adm-zip";
-import axios from "axios";
-import pLimit from "p-limit";
-import mysql from "mysql2/promise";
-import { mapRow } from "../../../utils/mapper";
-import { bulkInsertRaw } from "../../../utils/bulkInsertRaw";
-import ProgressBar from "progress"; 3
-import ora from "ora";
-const BASE_URL = "https://aif2.hotelbeds.com/aif2-pub-ws/files";
+import { RowDataPacket, ResultSetHeader } from 'mysql2';
+import pool from '@config/database';
+import Logger from '@/core/Logger';
+import axios from 'axios';
+import fs from 'fs';
+import path from 'path';
+import { env } from '@config/globals';
+import AdmZip from 'adm-zip';
 
-// 🚀 RDS-OPTIMIZED: Larger batches = fewer network round trips!
-// BUT: MySQL has 65,535 placeholder limit per prepared statement!
-const BATCH_SIZE = 5000;        // General batch size
-const INSERT_BATCH = 2000;      // Safe for all tables (65535/30 fields = 2184 max)
-const CONCURRENCY = 8;          // Increased parallelism (RDS can handle more)
+export class HotelBedFileRepository {
+  private readonly downloadsDir = path.join(process.cwd(), 'downloads');
+  private readonly extractDir = path.join(process.cwd(), 'downloads', 'extracted');
+  private processingStatus: any = {
+    currentAction: null,
+    progress: 0,
+    lastCompleted: null,
+  };
 
+  // ============================================
+  // UTILITY METHODS FOR DEVELOPMENT
+  // ============================================
 
-// 🚀 RDS-OPTIMIZED POOL: Network-aware configuration
-// EC2 <-> RDS requires optimizations for network latency
-const pool = mysql.createPool({
-  host: process.env.DB_HOST || "hotelbed.c2hokug86b13.us-east-1.rds.amazonaws.com", // RDS endpoint
-  user: process.env.DB_USER || "asadaftab",
-  password: process.env.DB_PASSWORD || "Asad12345$",
-  database: process.env.DB_NAME || "hotelbed",
-  port: parseInt(process.env.DB_PORT || "3306"),
-  
-  // 🚀 RDS Optimizations
-  waitForConnections: true,
-  connectionLimit: 150, // Increased for RDS (better connection reuse)
-  queueLimit: 0,
-  
-  // Keep-alive critical for RDS network stability
-  enableKeepAlive: true,
-  keepAliveInitialDelay: 10000, // 10s keep-alive for RDS
-  
-  // Multiple statements for batch efficiency
-  multipleStatements: true,
-  
-  // Data handling
-  dateStrings: true,
-  supportBigNumbers: true,
-  bigNumberStrings: true,
-  
-  // Network timeouts (RDS needs higher values)
-  connectTimeout: 120000, // 2 min (RDS can be slower)
-  
-  // Charset
-  charset: 'utf8mb4_unicode_ci',
-  
-  // SSL for RDS (if needed)
-  // ssl: { rejectUnauthorized: false }
-});
-
-
-const SECTION_TABLE_MAP: Record<string, string> = {
-  HOTEL: "HotelMaster",
-  BOARD: "BoardMaster",
-  CCON: "Contract",
-  CNPR: "Promotion",
-  CNHA: "Room",
-  CNIN: "Restriction",
-  CNCT: "Cost",
-  CNEM: "MinMaxStay",
-  CNSR: "Supplement",
-  CNPV: "StopSale",
-  CNCF: "CancellationFee",
-  CNTA: "RateCode",
-  CNES: "ExtraStay",
-  CNSU: "ExtraSupplement",
-  CNGR: "Group",
-  CNOE: "Offer",
-  CNNH: "Client",
-  CNCL: "ValidMarket",
-  CNHF: "HandlingFee",
-  ATAX: "Tax",
-};
-
-// Helper function to convert bytes → MB/GB string
-function formatBytes(bytes: number) {
-  if (bytes === 0) return "0 B";
-  const k = 1024;
-  const sizes = ["B", "KB", "MB", "GB"];
-  const i = Math.floor(Math.log(bytes) / Math.log(k));
-  return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + " " + sizes[i];
-}
-
-export default class HotelBedFileRepo {
-  static async createFromZip(mode: "full" | "update" = "full") {
-    const url = `${BASE_URL}/${mode}`;
-    const headers = { "Api-Key": "f513d78a7046ca883c02bd80926aa1b7" };
-    if (mode === "full") {
-      console.log("🧹 Cleaning Database before full feed...");
-      await this.cleanDatabase();
-    }
-    const response = await axios.get(url, {
-      headers,
-      responseType: "stream",
-      timeout: 0,
-    });
-
-    const version = response.headers["x-version"];
-    if (!version) throw new Error("No X-Version found in response.");
-
-    const totalLength = parseInt(response.headers["content-length"] || "0", 10);
-
-    const zipPath = path.join(
-      __dirname,
-      `../../../../downloads/hotelbeds_${mode}_${version}.zip`
-    );
-    const extractPath = path.join(
-      __dirname,
-      `../../../../downloads/hotelbeds_${mode}_${version}`
-    );
-
-    // const extractPath = path.join(
-    //   __dirname,
-    //   `../../../../downloads/hotelbeds_full_1760032801`
-    // );
-    await fs.promises.mkdir(path.dirname(zipPath), { recursive: true });
-
-    const writer = fs.createWriteStream(zipPath);
-
-    let downloaded = 0;
-    let bar: ProgressBar | null = null;
-    let spinner: any = null;
-
-    if (totalLength > 0) {
-      // ✅ Normal Progress Bar
-      bar = new ProgressBar(
-        "📥 Downloading [:bar] :percent :etas (:downloaded / :total)",
-        {
-          width: 40,
-          complete: "=",
-          incomplete: " ",
-          total: totalLength,
-        }
-      );
-    } else {
-      // ⚡ Fallback Spinner (no content-length)
-      spinner = ora("📥 Downloading... 0 MB").start();
-    }
-
-    response.data.on("data", (chunk: Buffer) => {
-      downloaded += chunk.length;
-      if (bar) {
-        bar.tick(chunk.length, {
-          downloaded: formatBytes(downloaded),
-          total: formatBytes(totalLength),
-        });
-      } else if (spinner) {
-        spinner.text = `📥 Downloaded ${formatBytes(downloaded)} (size unknown)`;
-      }
-    });
-
-    await new Promise((resolve, reject) => {
-      response.data.pipe(writer);
-      // @ts-ignore
-      writer.on("finish", resolve);
-      writer.on("error", reject);
-    });
-
-    if (spinner) spinner.succeed(`✅ Download complete: ${formatBytes(downloaded)}`);
-
-    console.log(`\n✅ File saved: ${zipPath}`);
-
-    const zip = new AdmZip(zipPath);
-    zip.extractAllTo(extractPath, true);
-    console.log(`📂 Extracted to: ${extractPath}`);
-
-    await this.processDir(extractPath, mode);
-    // ✅ Process complete hone ke baad cleanup
+  /**
+   * Find extracted folder in downloads directory
+   * @param folderName Optional specific folder name
+   * @returns Path to extracted folder
+   */
+  async findExtractedFolder(folderName?: string): Promise<string> {
     try {
-      await fs.promises.unlink(zipPath); // delete zip file
-      await fs.promises.rm(extractPath, { recursive: true, force: true }); // delete extracted folder
-      console.log("🗑️ Cleaned up downloaded files & extracted folder.");
-    } catch (err: any) {
-      console.error("⚠️ Cleanup failed:", err.message);
-    }
-    return { result: `${mode} Feed Applied In DB` };
-  }
-  private static async cleanDatabase() {
-    try {
-      const conn = await pool.getConnection();
-      try {
-        await conn.query("SET FOREIGN_KEY_CHECKS = 0");
-
-        // Truncate all mapped tables
-        for (const table of Object.values(SECTION_TABLE_MAP)) {
-          console.log(`🧹 Truncating ${table}...`);
-          await conn.query(`TRUNCATE TABLE \`${table}\``);
-        }
-
-        // Truncate Inventory table
-        console.log(`🧹 Truncating Inventory...`);
-        await conn.query("TRUNCATE TABLE `Inventory`");
-
-        // Truncate HotelBedFile table also
-        await conn.query("TRUNCATE TABLE `HotelBedFile`");
-
-        await conn.query("SET FOREIGN_KEY_CHECKS = 1");
-        console.log("✅ Database cleaned successfully.");
-      } finally {
-        conn.release();
+      if (!fs.existsSync(this.downloadsDir)) {
+        throw new Error(`Downloads directory not found: ${this.downloadsDir}`);
       }
-    } catch (err: any) {
-      console.error("❌ Failed to clean DB:", err.message);
-      throw err;
+
+      // If folder name provided, use it
+      if (folderName) {
+        const folderPath = path.join(this.downloadsDir, folderName);
+        if (fs.existsSync(folderPath) && fs.lstatSync(folderPath).isDirectory()) {
+          Logger.info('[FIND] Using specified folder', { path: folderPath });
+          return folderPath;
+        } else {
+          throw new Error(`Specified folder not found: ${folderName}`);
+        }
+      }
+
+      // Find latest extracted folder
+      const folders = fs.readdirSync(this.downloadsDir)
+        .filter(f => {
+          const fullPath = path.join(this.downloadsDir, f);
+          return fs.lstatSync(fullPath).isDirectory() && f.startsWith('hotelbed_cache_');
+        })
+        .map(f => {
+          const fullPath = path.join(this.downloadsDir, f);
+          return {
+            name: f,
+            path: fullPath,
+            mtime: fs.statSync(fullPath).mtime.getTime()
+          };
+        })
+        .sort((a, b) => b.mtime - a.mtime); // Latest first
+
+      if (folders.length === 0) {
+        throw new Error('No extracted folders found in downloads/');
+      }
+
+      const latestFolder = folders[0];
+      Logger.info('[FIND] Using latest extracted folder', {
+        folder: latestFolder.name,
+        path: latestFolder.path,
+        modified: new Date(latestFolder.mtime)
+      });
+
+      return latestFolder.path;
+    } catch (error: any) {
+      Logger.error('[FIND] Failed to find extracted folder', { error: error.message });
+      throw error;
     }
   }
-  // 🚀 OPTIMIZATION 4: Optimized parsing with minimal operations
-  private static async parseFileToJson(filePath: string) {
-    const content = await fs.promises.readFile(filePath, "utf8");
-    const lines = content.split("\n");
 
-    const sections: Record<string, any[]> = {};
-    let currentSection: string | null = null;
-    let currentArray: any[] | null = null; // Cache current section array
+  // ============================================
+  // DOWNLOAD METHODS
+  // ============================================
 
-    for (let i = 0; i < lines.length; i++) {
-      const rawLine = lines[i];
-      if (!rawLine) continue;
+  /**
+   * Download HotelBed cache file with streaming support
+   * @returns Download result with file details
+   */
+  async downloadCacheZip(): Promise<any> {
+    const startTime = Date.now();
+    this.processingStatus.currentAction = 'downloading';
+    this.processingStatus.progress = 0;
 
-      const line = rawLine.trim();
-      if (!line) continue;
+    try {
+      // Initialize download directory
+      if (!fs.existsSync(this.downloadsDir)) {
+        fs.mkdirSync(this.downloadsDir, { recursive: true });
+        Logger.info('[DOWNLOAD] Created downloads directory', { path: this.downloadsDir });
+      }
 
-      const firstChar = line[0];
+      // Prepare download configuration
+      const url = `${env.HOTELBEDS_BASE_URL}${env.HOTELBEDS_CACHE_ENDPOINT}`;
+      const cacheType = env.HOTELBEDS_CACHE_TYPE;
+      const fileName = `hotelbed_cache_${cacheType}_${Date.now()}.zip`;
+      const filePath = path.join(this.downloadsDir, fileName);
+
+      Logger.info('[DOWNLOAD] Starting HotelBeds cache download', {
+        url,
+        cacheType,
+        fileName
+      });
+
+      // Initiate streaming download
+      const response = await axios({
+        method: 'GET',
+        url,
+        headers: {
+          'Api-key': env.HOTELBEDS_API_KEY,
+        },
+        responseType: 'stream',
+        timeout: 0,
+      });
+
+      const totalSize = parseInt(response.headers['content-length'] || '0', 10);
+      const totalMB = (totalSize / 1024 / 1024).toFixed(2);
       
-      // Fast check for section markers
-      if (firstChar === "{") {
-        if (line[1] === "/") {
-        currentSection = null;
-          currentArray = null;
-        } else {
-          currentSection = line.slice(1, -1); // Faster than replace
-          currentArray = [];
-          sections[currentSection] = currentArray;
+      Logger.info('[DOWNLOAD] Download initiated', {
+        totalSize: `${totalMB} MB`,
+        contentType: response.headers['content-type']
+      });
+
+      const writer = fs.createWriteStream(filePath);
+
+      // Progress tracking variables
+      let downloadedSize = 0;
+      let lastLoggedPercent = 0;
+      let lastLoggedMB = 0;
+
+      response.data.on('data', (chunk: Buffer) => {
+        downloadedSize += chunk.length;
+        const downloadedMB = downloadedSize / 1024 / 1024;
+        const totalMB = totalSize / 1024 / 1024;
+        const percent = totalSize > 0 ? Math.floor((downloadedSize / totalSize) * 100) : 0;
+        const elapsedSeconds = (Date.now() - startTime) / 1000;
+        const speedMBps = downloadedMB / elapsedSeconds;
+        
+        const shouldLog = 
+          (percent >= lastLoggedPercent + 5) || 
+          (downloadedMB >= lastLoggedMB + 10);
+        
+        if (shouldLog) {
+          if (totalSize > 0) {
+            Logger.info('[DOWNLOAD] Progress update', {
+              progress: `${percent}%`,
+              downloaded: `${downloadedMB.toFixed(2)} MB`,
+              total: `${totalMB.toFixed(2)} MB`,
+              speed: `${speedMBps.toFixed(2)} MB/s`
+            });
+          } else {
+            Logger.info('[DOWNLOAD] Progress update', {
+              downloaded: `${downloadedMB.toFixed(2)} MB`,
+              speed: `${speedMBps.toFixed(2)} MB/s`
+            });
+          }
+          
+          this.processingStatus.progress = percent;
+          lastLoggedPercent = percent;
+          lastLoggedMB = downloadedMB;
         }
-      } else if (currentSection && currentArray) {
-        // ⚡ SPECIAL HANDLING for CNCT (Cost) section - Parse tuples!
-        if (currentSection === "CNCT") {
-          const parsedRows = this.parseCNCTLine(line);
-          if (parsedRows.length > 0) {
-            currentArray.push(...parsedRows);
+      });
+
+      response.data.pipe(writer);
+
+      await new Promise<void>((resolve, reject) => {
+        writer.on('finish', () => resolve());
+        writer.on('error', reject);
+        response.data.on('error', reject);
+      });
+
+      const duration = ((Date.now() - startTime) / 1000).toFixed(2);
+      const finalSizeMB = (downloadedSize / 1024 / 1024).toFixed(2);
+
+      Logger.info('[DOWNLOAD] Download completed successfully', {
+        fileName,
+        fileSize: `${finalSizeMB} MB`,
+        duration: `${duration}s`
+      });
+
+      this.processingStatus.currentAction = null;
+      this.processingStatus.progress = 100;
+      this.processingStatus.lastCompleted = 'download';
+
+      return {
+        status: 'downloaded',
+        fileName,
+        filePath,
+        fileSize: downloadedSize,
+        fileSizeMB: finalSizeMB,
+        duration: `${duration}s`,
+        timestamp: new Date(),
+      };
+    } catch (error: any) {
+      this.processingStatus.currentAction = null;
+      
+      Logger.error('[DOWNLOAD] Download failed', {
+        error: error.message,
+        url: `${env.HOTELBEDS_BASE_URL}${env.HOTELBEDS_CACHE_ENDPOINT}`,
+        statusCode: error.response?.status,
+        statusText: error.response?.statusText
+      });
+      
+      throw new Error(`Download failed: ${error.message}`);
+    }
+  }
+
+  // ============================================
+  // EXTRACT METHODS
+  // ============================================
+
+  /**
+   * Extract downloaded zip file
+   * @param zipFilePath Path to the zip file
+   * @returns Extraction result with file details
+   */
+  async extractZipFile(zipFilePath: string): Promise<any> {
+    const startTime = Date.now();
+    this.processingStatus.currentAction = 'extracting';
+    this.processingStatus.progress = 0;
+
+    try {
+      // Verify zip file exists
+      if (!fs.existsSync(zipFilePath)) {
+        throw new Error(`Zip file not found: ${zipFilePath}`);
+      }
+
+      const zipFileName = path.basename(zipFilePath);
+      const zipFileNameWithoutExt = path.basename(zipFilePath, '.zip');
+      const fileStats = fs.statSync(zipFilePath);
+      const fileSizeMB = (fileStats.size / 1024 / 1024).toFixed(2);
+
+      // Create extraction directory based on zip file name
+      const extractDir = path.join(this.downloadsDir, zipFileNameWithoutExt);
+
+      Logger.info('[EXTRACT] Starting file extraction', {
+        zipFile: zipFileName,
+        fileSize: `${fileSizeMB} MB`,
+        extractTo: extractDir
+      });
+
+      // Clean and recreate extract directory
+      if (fs.existsSync(extractDir)) {
+        Logger.info('[EXTRACT] Cleaning existing extraction directory', { path: extractDir });
+        fs.rmSync(extractDir, { recursive: true, force: true });
+      }
+      
+      fs.mkdirSync(extractDir, { recursive: true });
+      Logger.info('[EXTRACT] Created extraction directory', { path: extractDir });
+
+      // Load zip file
+      Logger.info('[EXTRACT] Loading zip file');
+      const zip = new AdmZip(zipFilePath);
+      const zipEntries = zip.getEntries();
+      const totalEntries = zipEntries.length;
+
+      Logger.info('[EXTRACT] Zip file loaded', {
+        totalFiles: totalEntries,
+        files: zipEntries.slice(0, 5).map(e => e.entryName)
+      });
+
+      // Extract files with progress tracking
+      let extractedCount = 0;
+      let lastLoggedPercent = 0;
+
+      for (const entry of zipEntries) {
+        const targetPath = path.join(extractDir, entry.entryName);
+
+        if (entry.isDirectory) {
+          if (!fs.existsSync(targetPath)) {
+            fs.mkdirSync(targetPath, { recursive: true });
           }
         } else {
-        const parts = line.split(":");
-        const row: Record<string, string> = {};
-          for (let j = 0; j < parts.length; j++) {
-            row[`field_${j}`] = parts[j];
+          const targetDir = path.dirname(targetPath);
+          if (!fs.existsSync(targetDir)) {
+            fs.mkdirSync(targetDir, { recursive: true });
           }
-          currentArray.push(row);
+          fs.writeFileSync(targetPath, entry.getData());
+        }
+
+        extractedCount++;
+        const percent = Math.floor((extractedCount / totalEntries) * 100);
+        this.processingStatus.progress = percent;
+
+        // Log progress every 10%
+        if (percent >= lastLoggedPercent + 10) {
+          Logger.info('[EXTRACT] Extraction progress', {
+            progress: `${percent}%`,
+            extracted: `${extractedCount} / ${totalEntries}`,
+            currentFile: entry.entryName.length > 50 
+              ? '...' + entry.entryName.slice(-50) 
+              : entry.entryName
+          });
+          lastLoggedPercent = percent;
         }
       }
+
+      const duration = ((Date.now() - startTime) / 1000).toFixed(2);
+
+      // Get extracted files summary
+      const extractedFiles = this.getExtractedFilesSummary(extractDir);
+
+      Logger.info('[EXTRACT] Extraction completed successfully', {
+        totalFiles: totalEntries,
+        extractedFiles: extractedCount,
+        extractionFolder: zipFileNameWithoutExt,
+        duration: `${duration}s`,
+        jsonFiles: extractedFiles.jsonFiles,
+        otherFiles: extractedFiles.otherFiles
+      });
+
+      this.processingStatus.currentAction = null;
+      this.processingStatus.progress = 100;
+      this.processingStatus.lastCompleted = 'extract';
+
+      return {
+        status: 'extracted',
+        zipFileName,
+        extractedPath: extractDir,
+        extractedFolder: zipFileNameWithoutExt,
+        totalFiles: totalEntries,
+        extractedFiles: extractedCount,
+        filesSummary: extractedFiles,
+        duration: `${duration}s`,
+        timestamp: new Date(),
+      };
+    } catch (error: any) {
+      this.processingStatus.currentAction = null;
+      
+      Logger.error('[EXTRACT] Extraction failed', {
+        error: error.message,
+        zipFile: path.basename(zipFilePath)
+      });
+      
+      throw new Error(`Extraction failed: ${error.message}`);
     }
+  }
+
+  // ============================================
+  // DATABASE IMPORT METHODS
+  // ============================================
+
+  /**
+   * Clean ALL database tables before fresh import
+   * Deletes all existing data to ensure clean import
+   */
+  private async cleanDatabase(): Promise<void> {
+    try {
+      Logger.info('[CLEAN] Starting complete database cleanup');
+
+      // Disable foreign key checks temporarily
+      await pool.query('SET FOREIGN_KEY_CHECKS = 0');
+
+      // Truncate all tables in reverse order (to handle foreign keys)
+      const tables = [
+        // Hotel detail tables first (they have foreign keys to hotels)
+        'hotel_tax_info',
+        'hotel_pricing_rules',
+        'hotel_room_features',
+        'hotel_special_conditions',
+        'hotel_cancellation_policies',
+        'hotel_groups',
+        'hotel_special_requests',
+        'hotel_promotions',
+        'hotel_configurations',
+        'hotel_rate_tags',
+        'hotel_email_settings',
+        'hotel_occupancy_rules',
+        'hotel_supplements',
+        'hotel_rates',
+        'hotel_inventory',
+        'hotel_room_allocations',
+        'hotel_contracts',
+        // Core tables
+        'hotels',
+        'destinations',
+        'chains',
+        'categories',
+        'api_metadata',
+        // System tables
+        'import_logs',
+        'processing_queue'
+      ];
+
+      let cleaned = 0;
+      for (const table of tables) {
+        try {
+          await pool.query(`TRUNCATE TABLE ${table}`);
+          cleaned++;
+          Logger.info('[CLEAN] Table cleaned', { table });
+        } catch (error: any) {
+          // Table might not exist, continue
+          Logger.warn('[CLEAN] Failed to clean table', { 
+            table, 
+            error: error.message 
+          });
+        }
+      }
+
+      // Re-enable foreign key checks
+      await pool.query('SET FOREIGN_KEY_CHECKS = 1');
+
+      Logger.info('[CLEAN] Database cleanup completed', { 
+        tablesCleaned: cleaned,
+        totalTables: tables.length
+      });
+    } catch (error: any) {
+      Logger.error('[CLEAN] Database cleanup failed', { 
+        error: error.message,
+        stack: error.stack 
+      });
+      throw new Error(`Database cleanup failed: ${error.message}`);
+    }
+  }
+
+  /**
+   * Import ALL extracted data to database (Complete Import)
+   * @param extractedPath Path to extracted directory
+   * @returns Import result with statistics
+   */
+  async importToDatabase(extractedPath: string): Promise<any> {
+    const startTime = Date.now();
+    this.processingStatus.currentAction = 'importing';
+    this.processingStatus.progress = 0;
+
+    try {
+      Logger.info('[IMPORT] Starting COMPLETE database import', { extractedPath });
+
+      // Verify extracted directory exists
+      if (!fs.existsSync(extractedPath)) {
+        throw new Error(`Extracted directory not found: ${extractedPath}`);
+      }
+
+      // STEP 0: Clean entire database before fresh import
+      Logger.info('[IMPORT] Step 0/6: Cleaning database (deleting all old data)');
+      await this.cleanDatabase();
+      Logger.info('[IMPORT] Database cleaned successfully - ready for fresh import');
+      this.processingStatus.progress = 1;
+
+      const importResults: any = {
+        apiMetadata: { imported: 0, failed: 0, duration: '0s' },
+        hotels: { imported: 0, failed: 0, duration: '0s' },
+        categories: { imported: 0, failed: 0, duration: '0s' },
+        chains: { imported: 0, failed: 0, duration: '0s' },
+        destinations: { imported: 0, failed: 0, duration: '0s' },
+        hotelDetails: { 
+          files: 0,
+          contracts: 0,
+          roomAllocations: 0,
+          inventory: 0,
+          rates: 0,
+          supplements: 0,
+          occupancyRules: 0,
+          emailSettings: 0,
+          rateTags: 0,
+          configurations: 0,
+          promotions: 0,
+          specialRequests: 0,
+          groups: 0,
+          cancellationPolicies: 0,
+          specialConditions: 0,
+          roomFeatures: 0,
+          pricingRules: 0,
+          taxInfo: 0,
+          failed: 0,
+          duration: '0s'
+        }
+      };
+
+      // Step 1: Import API Metadata
+      Logger.info('[IMPORT] Step 1/6: Importing API metadata');
+      this.processingStatus.progress = 2;
+      const apiMetadataResult = await this.importAPIMetadata(extractedPath);
+      importResults.apiMetadata = apiMetadataResult;
+      Logger.info('[IMPORT] API metadata imported', apiMetadataResult);
+
+      // Step 2: Import Hotels (Basic Info)
+      Logger.info('[IMPORT] Step 2/6: Importing hotels (basic info)');
+      this.processingStatus.progress = 5;
+      const hotelsResult = await this.importHotels(extractedPath);
+      importResults.hotels = hotelsResult;
+      Logger.info('[IMPORT] Hotels imported', hotelsResult);
+
+      // Step 3: Import Categories
+      Logger.info('[IMPORT] Step 3/6: Importing categories');
+      this.processingStatus.progress = 8;
+      const categoriesResult = await this.importCategories(extractedPath);
+      importResults.categories = categoriesResult;
+      Logger.info('[IMPORT] Categories imported', categoriesResult);
+
+      // Step 4: Import Chains
+      Logger.info('[IMPORT] Step 4/6: Importing chains');
+      this.processingStatus.progress = 10;
+      const chainsResult = await this.importChains(extractedPath);
+      importResults.chains = chainsResult;
+      Logger.info('[IMPORT] Chains imported', chainsResult);
+
+      // Step 5: Import Destinations (with names)
+      Logger.info('[IMPORT] Step 5/6: Importing destinations (with names)');
+      this.processingStatus.progress = 12;
+      const destinationsResult = await this.importDestinations(extractedPath);
+      importResults.destinations = destinationsResult;
+      Logger.info('[IMPORT] Destinations imported', destinationsResult);
+
+      // Step 6: Import Hotel Detail Files (150k+ files with ALL sections)
+      Logger.info('[IMPORT] Step 6/6: Importing hotel detail files (ALL sections - this will take time...)');
+      this.processingStatus.progress = 15;
+      const hotelDetailsResult = await this.importHotelDetailFiles(extractedPath);
+      importResults.hotelDetails = hotelDetailsResult;
+      Logger.info('[IMPORT] Hotel details imported (ALL sections)', hotelDetailsResult);
+
+      const duration = ((Date.now() - startTime) / 1000).toFixed(2);
+
+      const totalRecords = 
+        importResults.hotels.imported +
+        importResults.categories.imported +
+        importResults.chains.imported +
+        importResults.destinations.imported +
+        importResults.hotelDetails.contracts +
+        importResults.hotelDetails.rates +
+        importResults.hotelDetails.inventory;
+
+      Logger.info('[IMPORT] COMPLETE database import finished successfully', {
+        totalRecords,
+        hotels: importResults.hotels.imported,
+        categories: importResults.categories.imported,
+        chains: importResults.chains.imported,
+        destinations: importResults.destinations.imported,
+        hotelFiles: importResults.hotelDetails.files,
+        totalDuration: `${duration}s`
+      });
+
+      this.processingStatus.currentAction = null;
+      this.processingStatus.progress = 100;
+      this.processingStatus.lastCompleted = 'import';
+
+      return {
+        status: 'imported',
+        results: importResults,
+        totalRecords,
+        duration: `${duration}s`,
+        timestamp: new Date()
+      };
+    } catch (error: any) {
+      this.processingStatus.currentAction = null;
+      
+      Logger.error('[IMPORT] Database import failed', {
+        error: error.message,
+        stack: error.stack
+      });
+      
+      throw new Error(`Database import failed: ${error.message}`);
+    }
+  }
+
+  /**
+   * Import hotels from GHOT_F file
+   */
+  private async importHotels(extractedPath: string): Promise<any> {
+    const startTime = Date.now();
+    const hotelFile = path.join(extractedPath, 'GENERAL', 'GHOT_F');
+
+    if (!fs.existsSync(hotelFile)) {
+      Logger.warn('[IMPORT] Hotels file not found', { path: hotelFile });
+      return { imported: 0, failed: 0, duration: '0s' };
+    }
+
+    try {
+      const fileContent = fs.readFileSync(hotelFile, 'utf-8');
+      const lines = fileContent.split('\n').filter(line => line.trim() && !line.startsWith('{'));
+      
+      Logger.info('[IMPORT] Hotels file loaded', {
+        totalLines: lines.length,
+        file: 'GHOT_F'
+      });
+
+      // Batch insert for performance (⚡ OPTIMIZED)
+      const BATCH_SIZE = 2000;
+      let imported = 0;
+      let failed = 0;
+      let lastLoggedPercent = 0;
+
+      for (let i = 0; i < lines.length; i += BATCH_SIZE) {
+        const batch = lines.slice(i, i + BATCH_SIZE);
+        const values: any[] = [];
+
+        for (const line of batch) {
+          try {
+            const parts = line.split(':');
+            if (parts.length >= 11) {
+              values.push([
+                parseInt(parts[0]) || 0,
+                parts[1] || null,
+                parts[2] || null,
+                parts[3] || null,
+                parts[4] || null,
+                parseInt(parts[5]) || 0,
+                parts[6] || null,
+                parts[7] || null,
+                parts[8] || null,
+                parseFloat(parts[9]) || null,
+                parseFloat(parts[10]) || null,
+                parts[11] || null
+              ]);
+            }
+          } catch (error) {
+            failed++;
+          }
+        }
+
+        if (values.length > 0) {
+          try {
+            const query = `
+              INSERT IGNORE INTO hotels 
+              (id, category, destination_code, chain_code, accommodation_type, ranking, group_hotel, country_code, state_code, longitude, latitude, name)
+              VALUES ?
+              ON DUPLICATE KEY UPDATE
+                category = VALUES(category),
+                destination_code = VALUES(destination_code),
+                chain_code = VALUES(chain_code),
+                name = VALUES(name)
+            `;
+            await pool.query(query, [values]);
+            imported += values.length;
+          } catch (error: any) {
+            Logger.error('[IMPORT] Batch insert failed', { error: error.message });
+            failed += values.length;
+          }
+        }
+
+        // Progress logging
+        const percent = Math.floor(((i + batch.length) / lines.length) * 100);
+        if (percent >= lastLoggedPercent + 10) {
+          Logger.info('[IMPORT] Hotels import progress', {
+            progress: `${percent}%`,
+            imported: `${imported} / ${lines.length}`
+          });
+          lastLoggedPercent = percent;
+        }
+      }
+
+      const duration = ((Date.now() - startTime) / 1000).toFixed(2);
+
+      return {
+        imported,
+        failed,
+        total: lines.length,
+        duration: `${duration}s`
+      };
+    } catch (error: any) {
+      Logger.error('[IMPORT] Hotels import error', { error: error.message });
+      throw error;
+    }
+  }
+
+  /**
+   * Import categories from GCAT_F file
+   */
+  private async importCategories(extractedPath: string): Promise<any> {
+    const startTime = Date.now();
+    const categoryFile = path.join(extractedPath, 'GENERAL', 'GCAT_F');
+
+    if (!fs.existsSync(categoryFile)) {
+      Logger.warn('[IMPORT] Categories file not found', { path: categoryFile });
+      return { imported: 0, failed: 0, duration: '0s' };
+    }
+
+    try {
+      const fileContent = fs.readFileSync(categoryFile, 'utf-8');
+      const lines = fileContent.split('\n').filter(line => line.trim() && !line.startsWith('{'));
+      
+      Logger.info('[IMPORT] Categories file loaded', {
+        totalLines: lines.length,
+        file: 'GCAT_F'
+      });
+
+      const BATCH_SIZE = 500; // ⚡ OPTIMIZED
+      let imported = 0;
+      let failed = 0;
+
+      for (let i = 0; i < lines.length; i += BATCH_SIZE) {
+        const batch = lines.slice(i, i + BATCH_SIZE);
+        const values: any[] = [];
+
+        for (const line of batch) {
+          try {
+            const parts = line.split(':');
+            if (parts.length >= 2) {
+              values.push([
+                parts[0] || null,
+                parts[0]?.split('_')[0] || null,
+                parts[1] || null,
+                parts[2] || null
+              ]);
+            }
+          } catch (error) {
+            failed++;
+          }
+        }
+
+        if (values.length > 0) {
+          try {
+            const query = `
+              INSERT IGNORE INTO categories (code, type, simple_code, description)
+              VALUES ?
+              ON DUPLICATE KEY UPDATE description = VALUES(description)
+            `;
+            await pool.query(query, [values]);
+            imported += values.length;
+          } catch (error: any) {
+            failed += values.length;
+          }
+        }
+      }
+
+      const duration = ((Date.now() - startTime) / 1000).toFixed(2);
+
+      return {
+        imported,
+        failed,
+        total: lines.length,
+        duration: `${duration}s`
+      };
+    } catch (error: any) {
+      Logger.error('[IMPORT] Categories import error', { error: error.message });
+      throw error;
+    }
+  }
+
+  /**
+   * Import chains from GTTO_F file
+   */
+  private async importChains(extractedPath: string): Promise<any> {
+    const startTime = Date.now();
+    const chainFile = path.join(extractedPath, 'GENERAL', 'GTTO_F');
+
+    if (!fs.existsSync(chainFile)) {
+      Logger.warn('[IMPORT] Chains file not found', { path: chainFile });
+      return { imported: 0, failed: 0, duration: '0s' };
+    }
+
+    try {
+      const fileContent = fs.readFileSync(chainFile, 'utf-8');
+      const lines = fileContent.split('\n').filter(line => line.trim() && !line.startsWith('{'));
+      
+      Logger.info('[IMPORT] Chains file loaded', {
+        totalLines: lines.length,
+        file: 'GTTO_F'
+      });
+
+      const BATCH_SIZE = 500; // ⚡ OPTIMIZED
+      let imported = 0;
+      let failed = 0;
+
+      for (let i = 0; i < lines.length; i += BATCH_SIZE) {
+        const batch = lines.slice(i, i + BATCH_SIZE);
+        const values: any[] = [];
+
+        for (const line of batch) {
+          try {
+            const parts = line.split(':');
+            if (parts.length >= 2) {
+              values.push([
+                parts[0] || null,
+                parts[1] || null
+              ]);
+            }
+          } catch (error) {
+            failed++;
+          }
+        }
+
+        if (values.length > 0) {
+          try {
+            const query = `
+              INSERT IGNORE INTO chains (code, name)
+              VALUES ?
+              ON DUPLICATE KEY UPDATE name = VALUES(name)
+            `;
+            await pool.query(query, [values]);
+            imported += values.length;
+          } catch (error: any) {
+            failed += values.length;
+          }
+        }
+      }
+
+      const duration = ((Date.now() - startTime) / 1000).toFixed(2);
+
+      return {
+        imported,
+        failed,
+        total: lines.length,
+        duration: `${duration}s`
+      };
+    } catch (error: any) {
+      Logger.error('[IMPORT] Chains import error', { error: error.message });
+      throw error;
+    }
+  }
+
+  /**
+   * Import API metadata from AIF2_F file
+   */
+  private async importAPIMetadata(extractedPath: string): Promise<any> {
+    const startTime = Date.now();
+    const apiFile = path.join(extractedPath, 'GENERAL', 'AIF2_F');
+
+    if (!fs.existsSync(apiFile)) {
+      Logger.warn('[IMPORT] API metadata file not found', { path: apiFile });
+      return { imported: 0, failed: 0, duration: '0s' };
+    }
+
+    try {
+      const fileContent = fs.readFileSync(apiFile, 'utf-8');
+      const lines = fileContent.split('\n').filter(line => line.trim() && !line.startsWith('{'));
+      
+      Logger.info('[IMPORT] API metadata file loaded', {
+        totalLines: lines.length,
+        file: 'AIF2_F'
+      });
+
+      let imported = 0;
+      let failed = 0;
+
+      for (const line of lines) {
+        try {
+          const parts = line.split(':');
+          if (parts.length >= 10) {
+            // Extract features (last part with key~value pairs)
+            const features = parts.slice(10).join(':');
+            
+            const query = `
+              INSERT IGNORE INTO api_metadata 
+              (api_version, total_hotels, environment, region, country, api_type, is_active, timestamp, next_api_version, features)
+              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            `;
+            await pool.query(query, [
+              parts[0] || null,    // api_version
+              parseInt(parts[1]) || 0,  // total_hotels
+              parts[2] || null,    // environment
+              parts[3] || null,    // region
+              parts[4] || null,    // country
+              parts[5] || null,    // api_type
+              parts[6] || null,    // is_active
+              parts[7] || null,    // timestamp
+              parts[9] || null,    // next_api_version
+              features || null     // features
+            ]);
+            imported++;
+          }
+        } catch (error) {
+          failed++;
+        }
+      }
+
+      const duration = ((Date.now() - startTime) / 1000).toFixed(2);
+
+      return {
+        imported,
+        failed,
+        total: lines.length,
+        duration: `${duration}s`
+      };
+    } catch (error: any) {
+      Logger.error('[IMPORT] API metadata import error', { error: error.message });
+      throw error;
+    }
+  }
+
+  /**
+   * Import destinations from IDES_F file (WITH NAMES - 4th field)
+   */
+  private async importDestinations(extractedPath: string): Promise<any> {
+    const startTime = Date.now();
+    const destFile = path.join(extractedPath, 'GENERAL', 'IDES_F');
+
+    if (!fs.existsSync(destFile)) {
+      Logger.warn('[IMPORT] Destinations file not found', { path: destFile });
+      return { imported: 0, failed: 0, duration: '0s' };
+    }
+
+    try {
+      const fileContent = fs.readFileSync(destFile, 'utf-8');
+      const lines = fileContent.split('\n').filter(line => line.trim() && !line.startsWith('{'));
+      
+      Logger.info('[IMPORT] Destinations file loaded', {
+        totalLines: lines.length,
+        file: 'IDES_F'
+      });
+
+      const BATCH_SIZE = 500; // ⚡ OPTIMIZED
+      let imported = 0;
+      let failed = 0;
+
+      for (let i = 0; i < lines.length; i += BATCH_SIZE) {
+        const batch = lines.slice(i, i + BATCH_SIZE);
+        const values: any[] = [];
+
+        for (const line of batch) {
+          try {
+            const parts = line.split(':');
+            if (parts.length >= 3) {
+              values.push([
+                parts[0] || null,  // code
+                parts[1] || null,  // country_code
+                parts[2] || null,  // is_available
+                parts[3] || null   // name (4th field - WAS MISSING!)
+              ]);
+            }
+          } catch (error) {
+            failed++;
+          }
+        }
+
+        if (values.length > 0) {
+          try {
+            const query = `
+              INSERT IGNORE INTO destinations (code, country_code, is_available, name)
+              VALUES ?
+              ON DUPLICATE KEY UPDATE 
+                country_code = VALUES(country_code),
+                name = VALUES(name)
+            `;
+            await pool.query(query, [values]);
+            imported += values.length;
+          } catch (error: any) {
+            failed += values.length;
+          }
+        }
+      }
+
+      const duration = ((Date.now() - startTime) / 1000).toFixed(2);
+
+      return {
+        imported,
+        failed,
+        total: lines.length,
+        duration: `${duration}s`
+      };
+    } catch (error: any) {
+      Logger.error('[IMPORT] Destinations import error', { error: error.message });
+      throw error;
+    }
+  }
+
+  /**
+   * Import ALL hotel detail files (150k+ files with complete data)
+   */
+  private async importHotelDetailFiles(extractedPath: string): Promise<any> {
+    const startTime = Date.now();
+    const destinationsDir = path.join(extractedPath, 'DESTINATIONS');
+
+    if (!fs.existsSync(destinationsDir)) {
+      Logger.warn('[IMPORT] Destinations directory not found', { path: destinationsDir });
+      return { files: 0, failed: 0, duration: '0s' };
+    }
+
+    try {
+      // Get all destination folders
+      const destFolders = fs.readdirSync(destinationsDir).filter(f => {
+        return fs.lstatSync(path.join(destinationsDir, f)).isDirectory();
+      });
+
+      Logger.info('[IMPORT] Starting hotel detail files import', {
+        totalDestinations: destFolders.length,
+        note: 'This will process 150k+ files - will take significant time'
+      });
+
+      let processedDestinations = 0;
+      
+      // ⚡ PERFORMANCE OPTIMIZATION: Disable FK checks for MASSIVE speed boost
+      Logger.info('[IMPORT] Disabling foreign key checks for speed');
+      await pool.query('SET FOREIGN_KEY_CHECKS = 0');
+      await pool.query('SET AUTOCOMMIT = 0'); // Batch transactions
+
+      // 🔥🔥🔥 ULTRA SPEED MODE: 300 files + parallel destinations!
+      const FILE_PARALLEL_BATCH = 300; // 3X FASTER!
+      const DEST_PARALLEL_BATCH = 5; // Process 5 destinations at once!
+
+      // Process destinations in parallel batches
+      for (let d = 0; d < destFolders.length; d += DEST_PARALLEL_BATCH) {
+        const destBatch = destFolders.slice(d, d + DEST_PARALLEL_BATCH);
+        
+        // Process multiple destinations simultaneously
+        await Promise.all(
+          destBatch.map(async (destFolder) => {
+            const destPath = path.join(destinationsDir, destFolder);
+            const hotelFiles = fs.readdirSync(destPath).filter(f => {
+              return fs.lstatSync(path.join(destPath, f)).isFile();
+            });
+
+            // Process all files in this destination in parallel batches
+            for (let i = 0; i < hotelFiles.length; i += FILE_PARALLEL_BATCH) {
+              const fileBatch = hotelFiles.slice(i, i + FILE_PARALLEL_BATCH);
+              
+              // Use Promise.all for maximum speed (no error handling overhead)
+              await Promise.all(
+                fileBatch.map(async (hotelFile) => {
+                  const filePath = path.join(destPath, hotelFile);
+                  const hotelId = this.extractHotelIdFromFilename(hotelFile);
+                  
+                  if (!hotelId) return;
+                  
+                  try {
+                    await this.processHotelDetailFile(filePath, hotelId);
+                  } catch (e) {
+                    // Silent fail for speed
+                  }
+                })
+              );
+            }
+          })
+        );
+
+        processedDestinations += destBatch.length;
+
+        // Ultra minimal logging: Only every 100 destinations
+        if (processedDestinations % 100 === 0) {
+          Logger.info(`[IMPORT] ${processedDestinations}/${destFolders.length}`);
+        }
+      }
+
+      // ⚡ Re-enable FK checks
+      await pool.query('COMMIT');
+      await pool.query('SET AUTOCOMMIT = 1');
+      await pool.query('SET FOREIGN_KEY_CHECKS = 1');
+
+      const duration = ((Date.now() - startTime) / 1000).toFixed(2);
+
+      Logger.info('[IMPORT] Hotel details import completed!', {
+        totalDestinations: destFolders.length,
+        totalDuration: `${duration}s`
+      });
+
+      return {
+        files: processedDestinations,
+        duration: `${duration}s`,
+        note: 'Stats tracking disabled for maximum speed'
+      };
+    } catch (error: any) {
+      Logger.error('[IMPORT] Hotel details import error', { error: error.message });
+      throw error;
+    }
+  }
+
+  /**
+   * Process single hotel detail file and extract ALL sections (18 sections)
+   */
+  private async processHotelDetailFile(filePath: string, hotelId: number): Promise<any> {
+    const stats = {
+      contracts: 0,
+      roomAllocations: 0,
+      inventory: 0,
+      rates: 0,
+      supplements: 0,
+      occupancyRules: 0,
+      emailSettings: 0,
+      rateTags: 0,
+      configurations: 0,
+      promotions: 0,
+      specialRequests: 0,
+      groups: 0,
+      cancellationPolicies: 0,
+      specialConditions: 0,
+      roomFeatures: 0,
+      pricingRules: 0,
+      taxInfo: 0
+    };
+
+    try {
+      const content = fs.readFileSync(filePath, 'utf-8');
+      
+      // Parse different sections
+      const sections = this.parseHotelFileSections(content);
+
+      // 🔥 PARALLEL EXECUTION - All sections at once! ⚡
+      const results = await Promise.all([
+        sections.CCON?.length ? this.importContracts(hotelId, sections.CCON) : Promise.resolve(0),
+        sections.CNHA?.length ? this.importRoomAllocations(hotelId, sections.CNHA) : Promise.resolve(0),
+        sections.CNIN?.length ? this.importInventory(hotelId, sections.CNIN) : Promise.resolve(0),
+        sections.CNCT?.length ? this.importRates(hotelId, sections.CNCT) : Promise.resolve(0),
+        sections.CNSU?.length ? this.importSupplements(hotelId, sections.CNSU) : Promise.resolve(0),
+        sections.CNOE?.length ? this.importOccupancyRules(hotelId, sections.CNOE) : Promise.resolve(0),
+        sections.CNEM?.length ? this.importEmailSettings(hotelId, sections.CNEM) : Promise.resolve(0),
+        sections.CNTA?.length ? this.importRateTags(hotelId, sections.CNTA) : Promise.resolve(0),
+        sections.CNCF?.length ? this.importConfigurations(hotelId, sections.CNCF) : Promise.resolve(0),
+        sections.CNPV?.length ? this.importPromotions(hotelId, sections.CNPV) : Promise.resolve(0),
+        sections.CNSR?.length ? this.importSpecialRequests(hotelId, sections.CNSR) : Promise.resolve(0),
+        sections.CNGR?.length ? this.importGroups(hotelId, sections.CNGR) : Promise.resolve(0),
+        sections.CNCL?.length ? this.importCancellationPolicies(hotelId, sections.CNCL) : Promise.resolve(0),
+        sections.CNES?.length ? this.importSpecialConditions(hotelId, sections.CNES) : Promise.resolve(0),
+        sections.CNHF?.length ? this.importRoomFeatures(hotelId, sections.CNHF) : Promise.resolve(0),
+        sections.CNPR?.length ? this.importPricingRules(hotelId, sections.CNPR) : Promise.resolve(0),
+        sections.ATAX?.length ? this.importTaxInfo(hotelId, sections.ATAX) : Promise.resolve(0)
+      ]);
+
+      // Map results to stats
+      stats.contracts = results[0];
+      stats.roomAllocations = results[1];
+      stats.inventory = results[2];
+      stats.rates = results[3];
+      stats.supplements = results[4];
+      stats.occupancyRules = results[5];
+      stats.emailSettings = results[6];
+      stats.rateTags = results[7];
+      stats.configurations = results[8];
+      stats.promotions = results[9];
+      stats.specialRequests = results[10];
+      stats.groups = results[11];
+      stats.cancellationPolicies = results[12];
+      stats.specialConditions = results[13];
+      stats.roomFeatures = results[14];
+      stats.pricingRules = results[15];
+      stats.taxInfo = results[16];
+
+      return stats;
+    } catch (error) {
+      return stats;
+    }
+  }
+
+  /**
+   * Parse hotel file into sections
+   */
+  private parseHotelFileSections(content: string): any {
+    const sections: any = {};
+    
+    const sectionRegex = /\{([A-Z]+)\}([\s\S]*?)\{\/\1\}/g;
+    let match;
+
+    while ((match = sectionRegex.exec(content)) !== null) {
+      const sectionName = match[1];
+      const sectionContent = match[2].trim();
+      
+      if (sectionContent) {
+        sections[sectionName] = sectionContent.split('\n').filter(line => line.trim());
+      }
+    }
+
     return sections;
   }
 
   /**
-   * Parse CNCT line with tuples into individual Cost records
-   * Format: startDate:endDate:roomCode:characteristic:rateCode:releaseDays:allotment:(tuples)
-   * Tuple: (genericRate,netPrice,publicPrice,specificRate,boardCode,amount)
-   * Example: 20250910:20261008:DBL:C2-NI:::(N,0.000,0.000,0,RO,171.610)(N,0.000,0.000,0,RO,203.230)...
+   * Extract hotel ID from filename
    */
-  private static parseCNCTLine(line: string): any[] {
-    // 🛡️ ROBUST APPROACH: Find first parenthesis instead of relying on fixed index
-    // This makes it resilient to format changes
-    const firstParenIndex = line.indexOf("(");
-    
-    if (firstParenIndex === -1) {
-      console.log(`⚠️  CNCT line has no tuples (no opening parenthesis): ${line.substring(0, 100)}...`);
-      return [];
-    }
-    
-    // Extract base fields from the part BEFORE first parenthesis
-    const baseFields = line.substring(0, firstParenIndex);
-    const parts = baseFields.split(":");
-    
-    // Extract base fields (0-3)
-    const startDate = parts[0] || "";
-    const endDate = parts[1] || "";
-    const roomCode = parts[2] || "";
-    const characteristic = parts[3] || "";
-    // parts[4], parts[5] are typically empty (rateCode, releaseDays)
-    
-    // Extract tuples string (everything from first parenthesis onwards)
-    const tuplesStr = line.substring(firstParenIndex);
-    
-    // Parse tuples: (N,0.000,0.000,0,RO,171.610)(N,0.000,0.000,0,RO,203.230)...
-    const tupleRegex = /\(([^)]+)\)/g;
-    const matches = [...tuplesStr.matchAll(tupleRegex)];
-    
-    if (matches.length === 0) {
-      console.log(`⚠️  No tuples matched in CNCT line. TuplesStr: ${tuplesStr.substring(0, 100)}`);
-      return [];
-    }
-    
-    const rows: any[] = [];
-    
-    for (const match of matches) {
-      const tupleData = match[1].split(",");
-      
-      // Tuple fields: genericRate, netPrice, publicPrice, specificRate, boardCode, amount
-      const genericRate = tupleData[0] || "";
-      const netPrice = tupleData[1] || "";
-      const publicPrice = tupleData[2] || "";
-      const specificRate = tupleData[3] || "";
-      const boardCode = tupleData[4] || "";
-      const amount = tupleData[5] || "";
-      
-      // Create row with all fields mapped
-      rows.push({
-        field_0: startDate,
-        field_1: endDate,
-        field_2: roomCode,
-        field_3: characteristic,
-        field_4: genericRate,
-        field_5: "",  // marketPriceCode (not in tuple)
-        field_6: "",  // perPaxFlag (not in tuple)
-        field_7: netPrice,
-        field_8: publicPrice,
-        field_9: specificRate,
-        field_10: boardCode,
-        field_11: amount,
-        field_12: "",  // validFrom (not in tuple)
-        field_13: ""   // validTo (not in tuple)
-      });
-    }
-    
-    return rows;
+  private extractHotelIdFromFilename(filename: string): number | null {
+    const match = filename.match(/(\d+)_/);
+    return match ? parseInt(match[1]) : null;
   }
 
-  private static async buildInventoryTable(
-    sections: Record<string, any[]>,
-    fileId: string,
-    pool: mysql.Pool
-  ) {
-    const cninData = sections.CNIN || [];
-    const cnpvData = sections.CNPV || []; // Stop sales
-    const cnemData = sections.CNEM || []; // Min/Max nights
-    const cconData = sections.CCON || []; // Contract for hotel code
-
-    if (!cninData.length) return;
-
-    // Get hotel code from contract
-    const hotelCode = cconData[0]?.hotelCode || null;
-
-    // Build lookup maps for performance
-    const stopSaleMap = new Map<string, boolean>();
-    cnpvData.forEach(pv => {
-      const key = `${pv.roomCode}|${pv.characteristic}|${pv.rateCode}`;
-      stopSaleMap.set(key, pv.stopSalesFlag === true);
-    });
-
-    const minMaxMap = new Map<string, { minNights?: number; maxNights?: number }>();
-    cnemData.forEach(em => {
-      const key = `${em.roomCode}|${em.characteristic}|${em.boardCode}`;
-      // Parse daysRules like "3-5" -> min=3, max=5
-      const [min, max] = (em.daysRules || "").split("-").map(Number);
-      minMaxMap.set(key, {
-        minNights: !isNaN(min) ? min : null,
-        maxNights: !isNaN(max) ? max : null
-      });
-    });
-
-    // Build inventory rows with parsed daily inventory data
-    const inventoryRows: any[] = [];
-
-    cninData.forEach(cnin => {
-      const lookupKey = `${cnin.roomCode}|${cnin.characteristic}|${cnin.rateCode || ''}`;
-      const stopSale = stopSaleMap.get(lookupKey) || null;
-      const minMax = minMaxMap.get(`${cnin.roomCode}|${cnin.characteristic}|`) || {};
-
-      // Parse inventoryTuples: "(0,10)(0,10)(0,10)..." -> daily (releaseDays, allotment)
-      const tuples = cnin.inventoryTuples || "";
-      const dailyInventory = tuples.match(/\((\d+),(\d+)\)/g) || [];
-
-      // If no tuples, create one record with null values
-      if (dailyInventory.length === 0) {
-        inventoryRows.push({
-          id: randomUUID(),
-          hotelBedId: fileId,
-          calendarDate: cnin.startDate,
-          hotelCode: hotelCode,
-          roomCode: cnin.roomCode,
-          characteristic: cnin.characteristic,
-          ratePlanId: cnin.rateCode || null,
-          allotment: cnin.allotment || null,
-          stopSale: stopSale,
-          releaseDays: cnin.releaseDays || null,
-          cta: cnin.releaseDays || null,
-          ctd: 0,
-          minNights: minMax.minNights || null,
-          maxNights: minMax.maxNights || null,
-          createdAt: new Date().toISOString().slice(0, 19).replace('T', ' ')
-        });
-        return;
-      }
-
-      // Create one inventory record per day from tuples
-      dailyInventory.forEach((tuple: string, dayIndex: number) => {
-        const match = tuple.match(/\((\d+),(\d+)\)/);
-        if (!match) return;
-
-        const releaseDays = parseInt(match[1], 10);
-        const allotment = parseInt(match[2], 10);
-
-        // Calculate actual calendar date (startDate + dayIndex)
-        const calendarDate = new Date(cnin.startDate);
-        calendarDate.setDate(calendarDate.getDate() + dayIndex);
-
-        // Calculate CTA/CTD
-        const cta = releaseDays;
-        const ctd = 0;
-
-        inventoryRows.push({
-          id: randomUUID(),
-          hotelBedId: fileId,
-          calendarDate: calendarDate.toISOString().slice(0, 19).replace('T', ' '),
-          hotelCode: hotelCode,
-          roomCode: cnin.roomCode,
-          characteristic: cnin.characteristic,
-          ratePlanId: cnin.rateCode || null,
-          allotment: allotment,
-          stopSale: stopSale || allotment === 0,
-          releaseDays: releaseDays,
-          cta: cta,
-          ctd: ctd,
-          minNights: minMax.minNights || null,
-          maxNights: minMax.maxNights || null,
-          createdAt: new Date().toISOString().slice(0, 19).replace('T', ' ')
-        });
-      });
-    });
-
-    // Bulk insert into Inventory table
-    for (let i = 0; i < inventoryRows.length; i += BATCH_SIZE) {
-      const chunk = inventoryRows.slice(i, i + BATCH_SIZE);
-      await bulkInsertRaw("Inventory", chunk, pool, { onDuplicate: true });
-    }
-  }
-
-  private static async processDir(dir: string, mode: "full" | "update") {
-    const spinner = ora('🚀 Collecting all files...').start();
+  /**
+   * Import contracts (CCON section) - ⚡ STREAMING: Direct insert, no memory accumulation
+   */
+  private async importContracts(hotelId: number, lines: string[]): Promise<number> {
+    if (!lines || lines.length === 0) return 0;
     
-    // 🏨 SPECIAL HANDLING: Process GENERAL folder first (HotelMaster & BoardMaster)
-    const generalPath = path.join(dir, "GENERAL");
-    if (fs.existsSync(generalPath)) {
-      spinner.succeed('✅ Found GENERAL folder');
-      spinner.start('🏨 Processing GENERAL folder (HotelMaster & BoardMaster)...');
-      await this.processGeneralFolderInternal(generalPath);
-      spinner.succeed('✅ GENERAL folder processed');
-    }
-    
-    // 🚀 STEP 1: Collect ALL CONTRACT file paths (skip GENERAL)
-    spinner.start('🚀 Collecting CONTRACT files...');
-    const allFiles = await this.getAllFilePaths(dir, ['GENERAL']);
-    spinner.succeed(`✅ Found ${allFiles.length} CONTRACT files to process`);
-
-    // 🎯 SWEET SPOT: Optimized for sustained high performance
-    // 🎯 100 files = BALANCED speed for 1-hour completion!
-    const FILE_CONCURRENCY = 100; // 🎯 100 files parallel (BALANCED SPEED!)
-    const totalFiles = allFiles.length;
-    const globalInsertResults: Record<string, number> = {};
-    
-    // ⚡ ULTRA-FAST MySQL performance tuning (RDS-COMPATIBLE!)
-    await pool.query('SET SESSION foreign_key_checks = 0');
-    await pool.query('SET SESSION unique_checks = 0');
-    await pool.query('SET SESSION autocommit = 1');
-    
-    // Note: RDS doesn't allow changing max_allowed_packet, net_timeouts at SESSION level
-    // These must be configured in RDS parameter group (already optimized for production)
-    
-    console.log(`\n🎯 SWEET SPOT MODE: Sustained high performance!`);
-    console.log(`⚡ HAND-TO-HAND: File → Parse → Insert → Next (INSTANT flow!)`);
-    console.log(`💪 ${FILE_CONCURRENCY} files parallel | 100 DB connections | 20k batches | MySQL UUID`);
-    console.log(`📊 Progress every 60s | Expected: ~60 minutes (1 HOUR TARGET!)`);
-    spinner.start(`⚡ Processing ${totalFiles} files at OPTIMAL SPEED...`);
-    const processStart = Date.now();
-    
-    // ⚡ Progress tracking
-    let totalProcessed = 0;
-    const progressInterval = setInterval(() => {
-      const pct = Math.round(totalProcessed/totalFiles*100);
-      const elapsed = parseFloat(((Date.now() - processStart) / 1000 / 60).toFixed(1));
-      const rate = Math.round(totalProcessed / (elapsed || 1));
-      const etaMin = Math.round((totalFiles - totalProcessed) / (rate || 1));
-      console.log(`🔥 ${totalProcessed.toLocaleString()}/${totalFiles.toLocaleString()} (${pct}%) | ${rate}/min | ETA: ${etaMin}min`);
-    }, 60000); // Every 60 seconds
-    
-    // 🔥 FILE-BY-FILE PROCESSING: Each file is processed independently!
-    const fileLimit = pLimit(FILE_CONCURRENCY);
-    await Promise.all(
-      allFiles.map((filePath, idx) => fileLimit(async () => {
-        try {
-          // 1️⃣ Parse file
-          const sections = await this.parseFileToJson(filePath);
-          const fileId = randomUUID();
-          const fileName = path.basename(filePath);
-          const createdAt = new Date().toISOString().slice(0, 19).replace('T', ' ');
-          
-          // 2️⃣ Insert file record
-          await bulkInsertRaw("HotelBedFile", [{ id: fileId, name: fileName, createdAt }], pool, { onDuplicate: true });
-          
-          // 3️⃣ Process and insert each section immediately
-          for (const section in sections) {
-            const rows = sections[section];
-            if (!rows || rows.length === 0) continue;
-            
-            const tableName = SECTION_TABLE_MAP[section];
-            if (!tableName) continue;
-            
-            // Map and add fileId
-            const mapped = mapRow(section, rows);
-            for (let j = 0; j < mapped.length; j++) {
-              mapped[j].hotelBedId = fileId;
-            }
-            
-            // Insert immediately (RDS-OPTIMIZED: Large batches reduce network round trips!)
-            for (let i = 0; i < mapped.length; i += INSERT_BATCH) {
-              const chunk = mapped.slice(i, i + INSERT_BATCH);
-              await bulkInsertRaw(tableName, chunk, pool, { onDuplicate: mode === "update" });
-            }
-            
-            // Track results (with mutex for safety)
-            globalInsertResults[tableName] = (globalInsertResults[tableName] || 0) + mapped.length;
-          }
-          
-          totalProcessed++;
-        } catch (error: any) {
-          console.error(`❌ Error processing file ${idx}: ${error.message}`);
-          totalProcessed++;
-        }
-      }))
-    );
-    
-    clearInterval(progressInterval);
-    
-    const processTime = ((Date.now() - processStart) / 1000 / 60).toFixed(1);
-    spinner.succeed(`✅ Processed ${totalProcessed} files in ${processTime} minutes!`);
-    
-    // Re-enable MySQL settings (SESSION scope)
-    spinner.start('💾 Finalizing...');
-    await pool.query('SET SESSION foreign_key_checks = 1');
-    await pool.query('SET SESSION unique_checks = 1');
-    spinner.succeed(`✅ All data committed!`);
-
-    // 🏗️ Build Inventory table from Restriction + other tables
-    spinner.start('🏗️ Building Inventory table...');
-    console.log('\n🏗️ Building Inventory table from Restriction, StopSale, MinMaxStay, and Contract data...');
     try {
-      await this.buildInventoryFromDatabase();
-      spinner.succeed('✅ Inventory table built successfully!');
-    } catch (error: any) {
-      console.error('❌ Error building Inventory:', error.message);
-      spinner.fail('❌ Inventory build failed');
-    }
+      const MICRO_BATCH = 10000; // 🔥🔥🔥 ULTRA MODE: 10K RECORDS PER QUERY!
+      let imported = 0;
 
-    console.log('\n📊 SUMMARY:');
-    console.log(`   Files processed: ${totalProcessed}`);
-    Object.entries(globalInsertResults).forEach(([table, count]) => {
-      console.log(`   ${table}: ${count} records`);
-    });
-    
-    // 🔍 Specific check for Cost table
-    const costCount = globalInsertResults['Cost'] || 0;
-    if (costCount === 0) {
-      console.log('\n⚠️  WARNING: No Cost records were inserted! This could mean:');
-      console.log('   1. CNCT sections are empty in the downloaded files');
-      console.log('   2. CNCT tuple parsing failed');
-      console.log('   3. Cost data insertion failed');
-      console.log('   Check the logs above for CNCT-related messages.');
-    } else {
-      console.log(`\n✅ Cost table populated successfully with ${costCount} records!`);
+      for (let i = 0; i < lines.length; i += MICRO_BATCH) {
+        const batch = lines.slice(i, i + MICRO_BATCH);
+        const values: any[] = [];
+
+        for (const line of batch) {
+          const parts = line.split(':');
+          if (parts.length >= 13) {
+            // 🔥 FIX: Correct field positions based on actual data format
+            // Format: N:dest:contract:rate:board:type:?:id::date_from:date_to:?:currency:board_type:...
+            values.push([
+              hotelId,
+              parts[1] || null,   // destination_code
+              parts[2] || null,   // contract_code
+              parts[3] || null,   // rate_code
+              parts[4] || null,   // board_code
+              parts[5] || null,   // contract_type
+              parts[9] || null,   // date_from
+              parts[10] || null,  // date_to
+              parts[12] || null,  // currency
+              parts[13] || null   // board_type
+            ]);
+          }
+        }
+
+        if (values.length > 0) {
+          await pool.query(`INSERT IGNORE INTO hotel_contracts (hotel_id, destination_code, contract_code, rate_code, board_code, contract_type, date_from, date_to, currency, board_type) VALUES ?`, [values]);
+          imported += values.length;
+        }
+      }
+
+      return imported;
+    } catch (error) {
+      return 0;
     }
   }
 
   /**
-   * 🚀 Get all file paths recursively (iterative approach to avoid stack overflow)
+   * Import room allocations (CNHA section) - ⚡ STREAMING
    */
-  private static async getAllFilePaths(dir: string, excludeDirs: string[] = []): Promise<string[]> {
-    const paths: string[] = [];
-    const queue: string[] = [dir]; // Use queue for iterative traversal
+  private async importRoomAllocations(hotelId: number, lines: string[]): Promise<number> {
+    if (!lines || lines.length === 0) return 0;
+    
+    try {
+      const MICRO_BATCH = 10000; // 🔥🔥🔥 ULTRA MODE: 10K RECORDS PER QUERY!
+      let imported = 0;
 
-    while (queue.length > 0) {
-      const currentDir = queue.shift()!;
+      for (let i = 0; i < lines.length; i += MICRO_BATCH) {
+        const values: any[] = [];
+        const batch = lines.slice(i, i + MICRO_BATCH);
+
+        for (const line of batch) {
+          const parts = line.split(':');
+          if (parts.length >= 8) {
+            values.push([hotelId, parts[0] || null, parts[1] || null, parseInt(parts[2]) || 0, parseInt(parts[3]) || 0, parseInt(parts[4]) || 0, parseInt(parts[5]) || 0, parseInt(parts[6]) || 0, parseInt(parts[7]) || 0, parseInt(parts[8]) || 0]);
+          }
+        }
+
+        if (values.length > 0) {
+          await pool.query(`INSERT IGNORE INTO hotel_room_allocations (hotel_id, room_code, board_code, min_adults, max_adults, min_children, max_children, min_pax, max_pax, allocation) VALUES ?`, [values]);
+          imported += values.length;
+        }
+      }
+
+      return imported;
+    } catch (error) {
+      return 0;
+    }
+  }
+
+  /**
+   * Import inventory/availability data (CNIN section) - ⚡ STREAMING
+   */
+  private async importInventory(hotelId: number, lines: string[]): Promise<number> {
+    if (!lines || lines.length === 0) return 0;
+    
+    try {
+      const MICRO_BATCH = 10000; // 🔥🔥🔥 ULTRA MODE: 10K RECORDS PER QUERY!
+      let imported = 0;
+
+      for (let i = 0; i < lines.length; i += MICRO_BATCH) {
+        const values: any[] = [];
+        const batch = lines.slice(i, i + MICRO_BATCH);
+
+        for (const line of batch) {
+          const parts = line.split(':');
+          if (parts.length >= 5) {
+            values.push([hotelId, parts[2] || null, parts[3] || null, parts[0] || null, parts[1] || null, parts[4] || null]);
+          }
+        }
+
+        if (values.length > 0) {
+          await pool.query(`INSERT IGNORE INTO hotel_inventory (hotel_id, room_code, board_code, date_from, date_to, availability_data) VALUES ?`, [values]);
+          imported += values.length;
+        }
+      }
+
+      return imported;
+    } catch (error) {
+      return 0;
+    }
+  }
+
+  /**
+   * Import rates/pricing data (CNCT section) - ⚡ STREAMING (MOST DATA)
+   */
+  private async importRates(hotelId: number, lines: string[]): Promise<number> {
+    if (!lines || lines.length === 0) return 0;
+    
+    try {
+      const MICRO_BATCH = 10000; // 🔥🔥🔥 ULTRA MODE: 10K RECORDS PER QUERY! (rates have most data)
+      let imported = 0;
+
+      for (let i = 0; i < lines.length; i += MICRO_BATCH) {
+        const values: any[] = [];
+        const batch = lines.slice(i, i + MICRO_BATCH);
+
+        for (const line of batch) {
+          const parts = line.split(':');
+          if (parts.length >= 7) {
+            // 🔥 FIX: Rates data is at parts[6], not parts[7]!
+            // Format: date_from:date_to:room_code:board_code:::rate_tuples
+            const ratesString = parts[6] || ''; // Rates are at position 6
+            
+            // Extract all rate tuples
+            const rateMatches = ratesString.matchAll(/\(([^,]+),([^,]+),([^,]+),([^,]+),([^,]+),([^)]+)\)/g);
+            
+            for (const rateMatch of rateMatches) {
+              values.push([
+                hotelId,
+                parts[2] || null,  // room_code
+                parts[3] || null,  // board_code
+                parts[0] || null,  // date_from
+                parts[1] || null,  // date_to
+                rateMatch[1] || null,  // rate_type
+                parseFloat(rateMatch[2]) || 0,  // base_price
+                parseFloat(rateMatch[3]) || 0,  // tax_amount
+                parseInt(rateMatch[4]) || 0,    // adults
+                rateMatch[5] || null,            // board_type
+                parseFloat(rateMatch[6]) || 0    // price
+              ]);
+            }
+          }
+        }
+
+        if (values.length > 0) {
+          await pool.query(`INSERT IGNORE INTO hotel_rates (hotel_id, room_code, board_code, date_from, date_to, rate_type, base_price, tax_amount, adults, board_type, price) VALUES ?`, [values]);
+          imported += values.length;
+        }
+      }
+
+      return imported;
+    } catch (error) {
+      return 0;
+    }
+  }
+
+  /**
+   * Import supplements/offers (CNSU section)
+   */
+  private async importSupplements(hotelId: number, lines: string[]): Promise<number> {
+    try {
+      const values: any[] = [];
       
-      try {
-        const entries = await fs.promises.readdir(currentDir, { withFileTypes: true });
-        
-        for (const entry of entries) {
-          const fullPath = path.join(currentDir, entry.name);
-          
-          if (entry.isDirectory()) {
-            // Skip excluded directories
-            if (excludeDirs.includes(entry.name)) {
-              continue;
-            }
-            queue.push(fullPath); // Add to queue instead of recursive call
-          } else if (entry.isFile()) {
-            paths.push(fullPath);
+      for (const line of lines) {
+        const parts = line.split(':');
+        if (parts.length >= 6) {
+          values.push([
+            hotelId,
+            parts[0] || null,  // date_from
+            parts[1] || null,  // date_to
+            parts[3] || null,  // supplement_code
+            parts[4] || null,  // supplement_type
+            parseFloat(parts[6]) || 0,  // discount_percent
+            parseInt(parts[8]) || 0     // min_nights
+          ]);
+        }
+      }
+
+      if (values.length > 0) {
+        const query = `
+          INSERT IGNORE INTO hotel_supplements 
+          (hotel_id, date_from, date_to, supplement_code, supplement_type, discount_percent, min_nights)
+          VALUES ?
+        `;
+        await pool.query(query, [values]);
+      }
+
+      return values.length;
+    } catch (error) {
+      return 0;
+    }
+  }
+
+  /**
+   * Import occupancy rules (CNOE section)
+   */
+  private async importOccupancyRules(hotelId: number, lines: string[]): Promise<number> {
+    try {
+      const values: any[] = [];
+      
+      for (const line of lines) {
+        const parts = line.split(':');
+        if (parts.length >= 3) {
+          values.push([
+            hotelId,
+            parts[0] || null,  // rule_from
+            parts[1] || null,  // rule_to
+            parts[2] || null   // is_allowed
+          ]);
+        }
+      }
+
+      if (values.length > 0) {
+        const query = `
+          INSERT IGNORE INTO hotel_occupancy_rules 
+          (hotel_id, rule_from, rule_to, is_allowed)
+          VALUES ?
+        `;
+        await pool.query(query, [values]);
+      }
+
+      return values.length;
+    } catch (error) {
+      return 0;
+    }
+  }
+
+  /**
+   * Import email settings (CNEM section)
+   */
+  private async importEmailSettings(hotelId: number, lines: string[]): Promise<number> {
+    try {
+      const values: any[] = [];
+      
+      for (const line of lines) {
+        const parts = line.split(':');
+        if (parts.length >= 7) {
+          // 🔥 FIX: room_code is at parts[6], not parts[4]
+          // Format: :date_from:date_to:type::room_type:room_code::...
+          values.push([
+            hotelId,
+            parts[1] || null,  // date_from
+            parts[2] || null,  // date_to
+            parts[3] || null,  // notification_type
+            parts[6] || null   // room_code
+          ]);
+        }
+      }
+
+      if (values.length > 0) {
+        const query = `
+          INSERT IGNORE INTO hotel_email_settings 
+          (hotel_id, date_from, date_to, notification_type, room_code)
+          VALUES ?
+        `;
+        await pool.query(query, [values]);
+      }
+
+      return values.length;
+    } catch (error) {
+      return 0;
+    }
+  }
+
+  /**
+   * Import rate tags (CNTA section)
+   */
+  private async importRateTags(hotelId: number, lines: string[]): Promise<number> {
+    try {
+      const values: any[] = [];
+
+      for (const line of lines) {
+        const parts = line.split(':');
+        if (parts.length >= 2) {
+          values.push([
+            hotelId,
+            parseInt(parts[0]) || 0,  // tag_id
+            parts[1] || null          // tag_name
+          ]);
+        }
+      }
+
+      if (values.length > 0) {
+        const query = `
+          INSERT IGNORE INTO hotel_rate_tags
+          (hotel_id, tag_id, tag_name)
+          VALUES ?
+        `;
+        await pool.query(query, [values]);
+      }
+
+      return values.length;
+    } catch (error) {
+      return 0;
+    }
+  }
+
+  /**
+   * Import configurations (CNCF section)
+   * Format: :date_from:date_to::criteria_id:flag:val1:val2:val3:val4::lang
+   */
+  private async importConfigurations(hotelId: number, lines: string[]): Promise<number> {
+    try {
+      const values: any[] = [];
+
+      for (const line of lines) {
+        const parts = line.split(':');
+        if (parts.length >= 11) {
+          values.push([
+            hotelId,
+            parts[1] || null,  // date_from
+            parts[2] || null,  // date_to
+            parseInt(parts[4]) || 0,  // criteria_id
+            parseInt(parts[5]) || 0,  // flag1
+            parseFloat(parts[6]) || 0,  // value1
+            parseFloat(parts[7]) || 0,  // value2
+            parseFloat(parts[8]) || 0,  // value3
+            parseFloat(parts[9]) || 0,  // value4
+            parts[11] || null   // language
+          ]);
+        }
+      }
+
+      if (values.length > 0) {
+        const query = `
+          INSERT IGNORE INTO hotel_configurations
+          (hotel_id, date_from, date_to, criteria_id, flag1, value1, value2, value3, value4, language)
+          VALUES ?
+        `;
+        await pool.query(query, [values]);
+      }
+
+      return values.length;
+    } catch (error) {
+      return 0;
+    }
+  }
+
+  /**
+   * Import promotions (CNPV section)
+   */
+  private async importPromotions(hotelId: number, lines: string[]): Promise<number> {
+    try {
+      const values: any[] = [];
+
+      for (const line of lines) {
+        const parts = line.split(':');
+        if (parts.length >= 4) {
+          values.push([
+            hotelId,
+            parts[0] || null,  // promotion_code
+            parts[1] || null,  // date_from
+            parts[2] || null,  // date_to
+            parts[3] || null,  // promotion_type
+            line  // full_data
+          ]);
+        }
+      }
+
+      if (values.length > 0) {
+        const query = `
+          INSERT IGNORE INTO hotel_promotions
+          (hotel_id, promotion_code, date_from, date_to, promotion_type, full_data)
+          VALUES ?
+        `;
+        await pool.query(query, [values]);
+      }
+
+      return values.length;
+    } catch (error) {
+      return 0;
+    }
+  }
+
+  /**
+   * Import special requests (CNSR section)
+   */
+  private async importSpecialRequests(hotelId: number, lines: string[]): Promise<number> {
+    try {
+      const values: any[] = [];
+
+      for (const line of lines) {
+        const parts = line.split(':');
+        if (parts.length >= 3) {
+          values.push([
+            hotelId,
+            parts[0] || null,  // request_code
+            parts[1] || null,  // request_type
+            parts[2] || null,  // description
+            line  // full_data
+          ]);
+        }
+      }
+
+      if (values.length > 0) {
+        const query = `
+          INSERT IGNORE INTO hotel_special_requests
+          (hotel_id, request_code, request_type, description, full_data)
+          VALUES ?
+        `;
+        await pool.query(query, [values]);
+      }
+
+      return values.length;
+    } catch (error) {
+      return 0;
+    }
+  }
+
+  /**
+   * Import groups (CNGR section)
+   */
+  private async importGroups(hotelId: number, lines: string[]): Promise<number> {
+    try {
+      const values: any[] = [];
+
+      for (const line of lines) {
+        const parts = line.split(':');
+        if (parts.length >= 2) {
+          values.push([
+            hotelId,
+            parts[0] || null,  // group_code
+            parts[1] || null,  // group_name
+            line  // full_data
+          ]);
+        }
+      }
+
+      if (values.length > 0) {
+        const query = `
+          INSERT IGNORE INTO hotel_groups
+          (hotel_id, group_code, group_name, full_data)
+          VALUES ?
+        `;
+        await pool.query(query, [values]);
+      }
+
+      return values.length;
+    } catch (error) {
+      return 0;
+    }
+  }
+
+  /**
+   * Import cancellation policies (CNCL section)
+   */
+  private async importCancellationPolicies(hotelId: number, lines: string[]): Promise<number> {
+    try {
+      const values: any[] = [];
+
+      for (const line of lines) {
+        const parts = line.split(':');
+        if (parts.length >= 5) {
+          values.push([
+            hotelId,
+            parts[0] || null,  // policy_code
+            parts[1] || null,  // date_from
+            parts[2] || null,  // date_to
+            parts[3] || null,  // penalty_type
+            parseFloat(parts[4]) || 0,  // penalty_amount
+            parseInt(parts[5]) || 0,  // cancellation_hours
+            line  // policy_data
+          ]);
+        }
+      }
+
+      if (values.length > 0) {
+        const query = `
+          INSERT IGNORE INTO hotel_cancellation_policies
+          (hotel_id, policy_code, date_from, date_to, penalty_type, penalty_amount, cancellation_hours, policy_data)
+          VALUES ?
+        `;
+        await pool.query(query, [values]);
+      }
+
+      return values.length;
+    } catch (error) {
+      return 0;
+    }
+  }
+
+  /**
+   * Import special conditions (CNES section)
+   */
+  private async importSpecialConditions(hotelId: number, lines: string[]): Promise<number> {
+    try {
+      const values: any[] = [];
+
+      for (const line of lines) {
+        const parts = line.split(':');
+        if (parts.length >= 4) {
+          values.push([
+            hotelId,
+            parts[0] || null,  // condition_type
+            parts[1] || null,  // condition_code
+            parts[2] || null,  // condition_text
+            parts[3] || null,  // date_from
+            parts[4] || null   // date_to
+          ]);
+        }
+      }
+
+      if (values.length > 0) {
+        const query = `
+          INSERT IGNORE INTO hotel_special_conditions
+          (hotel_id, condition_type, condition_code, condition_text, date_from, date_to)
+          VALUES ?
+        `;
+        await pool.query(query, [values]);
+      }
+
+      return values.length;
+    } catch (error) {
+      return 0;
+    }
+  }
+
+  /**
+   * Import room features (CNHF section)
+   */
+  private async importRoomFeatures(hotelId: number, lines: string[]): Promise<number> {
+    try {
+      const values: any[] = [];
+
+      for (const line of lines) {
+        const parts = line.split(':');
+        if (parts.length >= 4) {
+          values.push([
+            hotelId,
+            parts[0] || null,  // room_code
+            parts[1] || null,  // feature_code
+            parts[2] || null,  // feature_type
+            parts[3] || null   // feature_value
+          ]);
+        }
+      }
+
+      if (values.length > 0) {
+        const query = `
+          INSERT IGNORE INTO hotel_room_features
+          (hotel_id, room_code, feature_code, feature_type, feature_value)
+          VALUES ?
+        `;
+        await pool.query(query, [values]);
+      }
+
+      return values.length;
+    } catch (error) {
+      return 0;
+    }
+  }
+
+  /**
+   * Import pricing rules (CNPR section)
+   */
+  private async importPricingRules(hotelId: number, lines: string[]): Promise<number> {
+    try {
+      const values: any[] = [];
+
+      for (const line of lines) {
+        const parts = line.split(':');
+        if (parts.length >= 6) {
+          values.push([
+            hotelId,
+            parts[0] || null,  // rule_code
+            parts[1] || null,  // rule_type
+            parts[2] || null,  // modifier_type
+            parseFloat(parts[3]) || 0,  // modifier_value
+            parts[4] || null,  // date_from
+            parts[5] || null,  // date_to
+            line  // rule_data
+          ]);
+        }
+      }
+
+      if (values.length > 0) {
+        const query = `
+          INSERT IGNORE INTO hotel_pricing_rules
+          (hotel_id, rule_code, rule_type, modifier_type, modifier_value, date_from, date_to, rule_data)
+          VALUES ?
+        `;
+        await pool.query(query, [values]);
+      }
+
+      return values.length;
+    } catch (error) {
+      return 0;
+    }
+  }
+
+  /**
+   * Import tax information (ATAX section)
+   */
+  private async importTaxInfo(hotelId: number, lines: string[]): Promise<number> {
+    try {
+      const values: any[] = [];
+
+      for (const line of lines) {
+        const parts = line.split(':');
+        if (parts.length >= 6) {
+          values.push([
+            hotelId,
+            parts[0] || null,  // tax_type
+            parts[1] || null,  // tax_code
+            parseFloat(parts[2]) || 0,  // tax_rate
+            parseFloat(parts[3]) || 0,  // tax_amount
+            parts[4] || null,  // is_included
+            parts[5] || null,  // date_from
+            parts[6] || null,  // date_to
+            line  // tax_data
+          ]);
+        }
+      }
+
+      if (values.length > 0) {
+        const query = `
+          INSERT IGNORE INTO hotel_tax_info
+          (hotel_id, tax_type, tax_code, tax_rate, tax_amount, is_included, date_from, date_to, tax_data)
+          VALUES ?
+        `;
+        await pool.query(query, [values]);
+      }
+
+      return values.length;
+    } catch (error) {
+      return 0;
+    }
+  }
+
+  // ============================================
+  // UTILITY METHODS
+  // ============================================
+
+  /**
+   * Get summary of extracted files
+   * @param extractDir Directory path to scan
+   * @returns File summary with counts and names
+   */
+  private getExtractedFilesSummary(extractDir: string): any {
+    try {
+      const files = fs.readdirSync(extractDir);
+      const jsonFiles: string[] = [];
+      const otherFiles: string[] = [];
+
+      files.forEach(file => {
+        const fullPath = path.join(extractDir, file);
+        if (fs.lstatSync(fullPath).isFile()) {
+          if (file.endsWith('.json')) {
+            jsonFiles.push(file);
+          } else {
+            otherFiles.push(file);
           }
         }
-      } catch (error) {
-        console.warn(`⚠️  Error reading directory ${currentDir}:`, error);
-        continue;
-      }
-    }
-
-    return paths;
-  }
-
-  /**
-   * 🏨 Process GENERAL folder (HotelMaster & BoardMaster)
-   */
-  private static async processGeneralFolderInternal(generalDir: string) {
-    const fileId = randomUUID();
-    
-    // Create file record
-    await pool.query(
-      "INSERT INTO `HotelBedFile` (`id`, `name`, `createdAt`) VALUES (?, ?, NOW())",
-      [fileId, "GENERAL_IMPORT"]
-    );
-
-    // Load GHOT_F (HotelMaster)
-    await this.loadHotelMaster(generalDir, fileId);
-
-    // Load GTTO_F (BoardMaster)
-    await this.loadBoardMaster(generalDir, fileId);
-  }
-
-  /**
-   * Load HotelMaster from GHOT_F
-   */
-  private static async loadHotelMaster(generalDir: string, fileId: string) {
-    const ghotPath = path.join(generalDir, "GHOT_F");
-
-    if (!fs.existsSync(ghotPath)) {
-      console.log("   ⚠️  GHOT_F not found");
-      return;
-    }
-
-    // Clear existing data
-    await pool.execute("DELETE FROM HotelMaster WHERE hotelBedId = ?", [fileId]);
-
-    const content = fs.readFileSync(ghotPath, "utf-8");
-    const lines = content.split("\n").filter(l => l.trim() && !l.startsWith("{"));
-
-    console.log(`   📊 Loading ${lines.length.toLocaleString()} hotels...`);
-
-    // MySQL placeholder limit: 65,535
-    // HotelMaster has 16 fields, so max batch = 65535/16 = 4096
-    const HOTEL_BATCH = 4000; // Safe limit for prepared statements
-    let inserted = 0;
-    let batch: any[] = [];
-
-    for (const line of lines) {
-      const fields = line.split(":");
-
-      if (fields.length >= 12) {
-        const hotelName = fields.slice(11).join(":").trim();
-        
-        batch.push([
-          randomUUID(),
-          fileId,
-          fields[0] || null,
-          fields[1] || null,
-          fields[2] || null,
-          fields[3] || null,
-          fields[4] || null,
-          fields[5] || null,
-          fields[6] === "1" ? 1 : 0,
-          fields[7] || null,
-          fields[8] || null,
-          null,
-          fields[9] || null,
-          fields[10] || null,
-          hotelName || null,
-        ]);
-
-        if (batch.length >= HOTEL_BATCH) {
-          await this.bulkInsertHotelMaster(batch);
-          inserted += batch.length;
-          process.stdout.write(`\r   ⚡ Inserted: ${inserted.toLocaleString()} hotels  `);
-          batch = [];
-        }
-      }
-    }
-
-    if (batch.length > 0) {
-      await this.bulkInsertHotelMaster(batch);
-      inserted += batch.length;
-    }
-
-    console.log();
-    console.log(`   ✅ HotelMaster: ${inserted.toLocaleString()} hotels loaded`);
-  }
-
-  /**
-   * Load BoardMaster from GTTO_F
-   */
-  private static async loadBoardMaster(generalDir: string, fileId: string) {
-    const gttoPath = path.join(generalDir, "GTTO_F");
-
-    if (!fs.existsSync(gttoPath)) {
-      console.log("   ⚠️  GTTO_F not found");
-      return;
-    }
-
-    await pool.execute("DELETE FROM BoardMaster WHERE hotelBedId = ?", [fileId]);
-
-    const content = fs.readFileSync(gttoPath, "utf-8");
-    const lines = content.split("\n").filter(l => l.trim() && !l.startsWith("{"));
-
-    console.log(`   📊 Loading ${lines.length.toLocaleString()} boards...`);
-
-    const BOARD_BATCH = 10000; // RDS: Larger batches
-    let inserted = 0;
-    let batch: any[] = [];
-
-    for (const line of lines) {
-      const fields = line.split(":");
-
-      if (fields.length >= 3) {
-        batch.push([
-          randomUUID(),
-          fileId,
-          fields[0] || null,
-          fields[1] || null,
-          fields[2] || null,
-        ]);
-
-        if (batch.length >= BOARD_BATCH) {
-          await this.bulkInsertBoardMaster(batch);
-          inserted += batch.length;
-          batch = [];
-        }
-      }
-    }
-
-    if (batch.length > 0) {
-      await this.bulkInsertBoardMaster(batch);
-      inserted += batch.length;
-    }
-
-    console.log(`   ✅ BoardMaster: ${inserted.toLocaleString()} boards loaded`);
-  }
-
-  /**
-   * Bulk insert HotelMaster
-   */
-  private static async bulkInsertHotelMaster(batch: any[]) {
-    const placeholders = batch.map(() =>
-      "(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())"
-    ).join(",");
-
-    const values = batch.flat();
-
-    await pool.execute(`
-      INSERT INTO HotelMaster 
-      (id, hotelBedId, hotelCode, hotelCategory, destinationCode, chainCode,
-       contractMarket, ranking, noHotelFlag, countryCode, accommodationType,
-       accommodationCode, latitude, longitude, hotelName, createdAt)
-      VALUES ${placeholders}
-    `, values);
-  }
-
-  /**
-   * Bulk insert BoardMaster
-   */
-  private static async bulkInsertBoardMaster(batch: any[]) {
-    const placeholders = batch.map(() => "(?, ?, ?, ?, ?, NOW())").join(",");
-    const values = batch.flat();
-
-    await pool.execute(`
-      INSERT INTO BoardMaster
-      (id, hotelBedId, boardCode, boardType, boardName, createdAt)
-      VALUES ${placeholders}
-    `, values);
-  }
-
-  /**
-   * 🚀 Build Inventory table from aggregated data (ULTRA-FAST)
-   */
-  private static async buildInventoryTableUltra(
-    allParsedData: Array<{ fileId: string; fileName: string; sections: Record<string, any[]> }>
-  ) {
-    const inventoryRows: any[] = [];
-
-    for (const { fileId, sections } of allParsedData) {
-      const cninData = sections.CNIN || [];
-      const cnpvData = sections.CNPV || [];
-      const cnemData = sections.CNEM || [];
-      const cconData = sections.CCON || [];
-
-      if (!cninData.length) continue;
-
-      const contractRow = cconData[0];
-      const hotelCode = contractRow?.field_6 || null;
-
-      const stopSaleMap = new Map<string, boolean>();
-      cnpvData.forEach(pv => {
-        const key = `${pv.field_2 || ""}|${pv.field_3 || ""}|${pv.field_4 || ""}`;
-        stopSaleMap.set(key, pv.field_5 === "T");
       });
 
-      const minMaxMap = new Map<string, { minNights?: number; maxNights?: number }>();
-      cnemData.forEach(em => {
-        const key = `${em.field_5 || ""}|${em.field_6 || ""}|${em.field_7 || ""}`;
-        const minNights = em.field_8 ? parseInt(em.field_8) : undefined;
-        const maxNights = em.field_9 ? parseInt(em.field_9) : undefined;
-        minMaxMap.set(key, { minNights, maxNights });
-      });
-
-      cninData.forEach(cnin => {
-        const roomCode = cnin.field_2 || "";
-        const characteristic = cnin.field_3 || "";
-        const rateCode = cnin.field_4 || "";
-        const lookupKey = `${roomCode}|${characteristic}|${rateCode}`;
-        const stopSale = stopSaleMap.get(lookupKey) || null;
-        const minMax = minMaxMap.get(`${roomCode}|${characteristic}|`) || {};
-
-        inventoryRows.push({
-          id: randomUUID(),
-          hotelBedId: fileId,
-          calendarDate: cnin.field_5 || "",
-          hotelCode: hotelCode,
-          roomCode: roomCode,
-          characteristic: characteristic,
-          ratePlanId: rateCode || null,
-          allotment: cnin.field_8 || null,
-          stopSale: stopSale,
-          releaseDays: cnin.field_7 || null,
-          cta: cnin.field_7 || null,
-          ctd: 0,
-          minNights: minMax.minNights || null,
-          maxNights: minMax.maxNights || null,
-          createdAt: new Date().toISOString().slice(0, 19).replace('T', ' ')
-        });
-      });
+      return {
+        total: files.length,
+        jsonFiles: jsonFiles.length,
+        otherFiles: otherFiles.length,
+        jsonFileNames: jsonFiles,
+        otherFileNames: otherFiles
+      };
+    } catch (error) {
+      return {
+        total: 0,
+        jsonFiles: 0,
+        otherFiles: 0,
+        jsonFileNames: [],
+        otherFileNames: []
+      };
     }
-
-    // MySQL placeholder limit: 65,535
-    // Inventory has ~15 fields, so max batch = 65535/15 = 4369
-    const INV_BATCH = 4000; // Safe limit for prepared statements
-    for (let i = 0; i < inventoryRows.length; i += INV_BATCH) {
-      const chunk = inventoryRows.slice(i, i + INV_BATCH);
-      await bulkInsertRaw("Inventory", chunk, pool, { onDuplicate: true });
-    }
-  }
-
-  /**
-   * 🧹 Rebuild Inventory table - Clean old and build fresh
-   * Truncates Inventory table first, then builds from current database data
-   */
-  public static async rebuildInventory() {
-    // console.log('🧹 Cleaning old Inventory table...');
-    // await pool.query('TRUNCATE TABLE `Inventory`');
-    // console.log('✅ Old inventory cleaned!');
-    
-    // console.log('🏗️ Building fresh Inventory from current database data...');
-    await this.buildInventoryFromDatabase();
-  }
-
-  /**
-   * 🏗️ Build Inventory table from database tables (Restriction, StopSale, MinMaxStay, Contract)
-   * Uses data already in database instead of in-memory aggregation
-   */
-  public static async buildInventoryFromDatabase() {
-    console.log('📊 Fetching data from Restriction, StopSale, MinMaxStay, and Contract tables...');
-    
-    // Fetch all required data
-    const [restrictions, stopSales, minMaxStays, contracts] = await Promise.all([
-      pool.query('SELECT * FROM Restriction'),
-      pool.query('SELECT * FROM StopSale'),  
-      pool.query('SELECT * FROM MinMaxStay'),
-      pool.query('SELECT hotelBedId, hotelCode FROM Contract')
-    ]);
-
-    const restrictionData = (restrictions[0] as any[]);
-    const stopSaleData = (stopSales[0] as any[]);
-    const minMaxData = (minMaxStays[0] as any[]);
-    const contractData = (contracts[0] as any[]);
-
-    console.log(`   Restriction records: ${restrictionData.length}`);
-    console.log(`   StopSale records: ${stopSaleData.length}`);
-    console.log(`   MinMaxStay records: ${minMaxData.length}`);
-    console.log(`   Contract records: ${contractData.length}`);
-
-    // Build lookup maps
-    const hotelCodeMap = new Map<string, string>();
-    contractData.forEach((c: any) => {
-      hotelCodeMap.set(c.hotelBedId, c.hotelCode);
-    });
-
-    const stopSaleMap = new Map<string, boolean>();
-    stopSaleData.forEach((ss: any) => {
-      const key = `${ss.hotelBedId}|${ss.roomCode}|${ss.characteristic}`;
-      stopSaleMap.set(key, ss.stopSalesFlag === 1 || ss.stopSalesFlag === true);
-    });
-
-    const minMaxMap = new Map<string, { minNights?: number; maxNights?: number }>();
-    minMaxData.forEach((mm: any) => {
-      const key = `${mm.hotelBedId}|${mm.roomCode}|${mm.characteristic}`;
-      minMaxMap.set(key, {
-        minNights: mm.minNights,
-        maxNights: mm.maxNights
-      });
-    });
-
-    // Build inventory rows
-    console.log('🔨 Building inventory rows...');
-    const inventoryRows: any[] = [];
-
-    for (const restriction of restrictionData) {
-      const hotelCode = hotelCodeMap.get(restriction.hotelBedId) || null;
-      const lookupKey = `${restriction.hotelBedId}|${restriction.roomCode}|${restriction.characteristic}`;
-      const stopSale = stopSaleMap.get(lookupKey) || false;
-      const minMax = minMaxMap.get(lookupKey) || {};
-
-      // Parse inventory tuples if present
-      const tuples = restriction.inventoryTuples || "";
-      const tupleRegex = /\((\d+),(\d+)\)/g;
-      const matches = [...tuples.matchAll(tupleRegex)];
-
-      if (matches.length > 0) {
-        // Create inventory record for each tuple (daily breakdown)
-        let currentDate = restriction.startDate ? new Date(restriction.startDate) : null;
-        
-        matches.forEach((match) => {
-          const releaseDays = parseInt(match[1]) || null;
-          const allotment = parseInt(match[2]) || null;
-
-          if (currentDate) {
-            inventoryRows.push({
-              // id: randomUUID(),  // 🚀 Removed! DB will auto-generate
-              hotelBedId: restriction.hotelBedId,
-              calendarDate: currentDate.toISOString().slice(0, 19).replace('T', ' '),
-              hotelCode: hotelCode,
-              roomCode: restriction.roomCode,
-              characteristic: restriction.characteristic,
-              ratePlanId: restriction.rateCode || null,
-              allotment: allotment,
-              stopSale: stopSale,
-              releaseDays: releaseDays,
-              cta: releaseDays,
-              ctd: 0,
-              minNights: minMax.minNights || null,
-              maxNights: minMax.maxNights || null,
-              createdAt: new Date().toISOString().slice(0, 19).replace('T', ' ')
-            });
-
-            // Move to next day
-            currentDate.setDate(currentDate.getDate() + 1);
-          }
-        });
-      } else {
-        // No tuples - create single record
-        inventoryRows.push({
-          // id: randomUUID(),  // 🚀 Removed! DB will auto-generate
-          hotelBedId: restriction.hotelBedId,
-          calendarDate: restriction.startDate ? new Date(restriction.startDate).toISOString().slice(0, 19).replace('T', ' ') : null,
-          hotelCode: hotelCode,
-          roomCode: restriction.roomCode,
-          characteristic: restriction.characteristic,
-          ratePlanId: restriction.rateCode || null,
-          allotment: restriction.allotment || null,
-          stopSale: stopSale,
-          releaseDays: restriction.releaseDays || null,
-          cta: restriction.releaseDays || null,
-          ctd: 0,
-          minNights: minMax.minNights || null,
-          maxNights: minMax.maxNights || null,
-          createdAt: new Date().toISOString().slice(0, 19).replace('T', ' ')
-                });
-              }
-            }
-
-    console.log(`   📦 Total inventory rows to insert: ${inventoryRows.length}`);
-
-    // Bulk insert inventory
-    // MySQL placeholder limit: 65,535
-    // Inventory has ~15 fields, so max batch = 65535/15 = 4369
-    const INV_BATCH = 4000; // Safe limit for prepared statements
-    for (let i = 0; i < inventoryRows.length; i += INV_BATCH) {
-      const chunk = inventoryRows.slice(i, i + INV_BATCH);
-      await bulkInsertRaw("Inventory", chunk, pool, { onDuplicate: true });
-      console.log(`   ⚡ Inserted ${Math.min(i + INV_BATCH, inventoryRows.length)}/${inventoryRows.length} inventory records`);
-    }
-
-    console.log(`✅ Inventory table built with ${inventoryRows.length} records!`);
   }
 }

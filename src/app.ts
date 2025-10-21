@@ -1,20 +1,20 @@
-import { config } from 'dotenv'
+import { config } from 'dotenv';
 config();
-import { createServer, Server as HttpServer } from 'http'
-import express from 'express'
-import { port, environment } from './config/globals'
-import { Server } from './Api/server'
-import Logger from './core/Logger';
-import { prisma } from "./database"
-import { redisManager } from './config/redis.config';
+import { createServer, Server as HttpServer } from 'http';
+import express from 'express';
+import { port, environment } from '@config/globals';
+import { Server } from './api/server';
+import Logger from '@/core/Logger';
+import { testConnection } from '@config/database';
+import { redisManager } from '@config/redis.config';
 // import { queueManager } from './jobs/queue.manager';
 // import { cronScheduler } from './jobs/cron.scheduler';
 
 (async function main(): Promise<void> {
   try {
     // Connect to database
-    await prisma.$connect();
-    Logger.info('✅ Database connected');
+    await testConnection();
+    Logger.info('✅ MySQL Database connected');
 
     // Connect to Redis (Optional - app will work without it)
     const redisEnabled = process.env.ENABLE_REDIS !== 'false';
@@ -79,45 +79,47 @@ import { redisManager } from './config/redis.config';
     });
 
     // Graceful shutdown
-    const shutdown = async () => {
-      Logger.info('🛑 Shutting down gracefully...');
+    // const shutdown = async () => {
+    //   Logger.info('🛑 Shutting down gracefully...');
       
-      // try {
-      //   // Stop cron jobs
-      //   cronScheduler.stopAll();
-      // } catch (err) {
-      //   Logger.debug('Error stopping cron:', err);
-      // }
+    //   // try {
+    //   //   // Stop cron jobs
+    //   //   cronScheduler.stopAll();
+    //   // } catch (err) {
+    //   //   Logger.debug('Error stopping cron:', err);
+    //   // }
       
-      // try {
-      //   // Close queue connections
-      //   await queueManager.close();
-      // } catch (err) {
-      //   Logger.debug('Error closing queue:', err);
-      // }
+    //   // try {
+    //   //   // Close queue connections
+    //   //   await queueManager.close();
+    //   // } catch (err) {
+    //   //   Logger.debug('Error closing queue:', err);
+    //   // }
       
-      try {
-        // Close Redis
-        await redisManager.disconnect();
-      } catch (err) {
-        Logger.debug('Error disconnecting Redis:', err);
-      }
+    //   try {
+    //     // Close Redis
+    //     await redisManager.disconnect();
+    //   } catch (err) {
+    //     Logger.debug('Error disconnecting Redis:', err);
+    //   }
       
-      try {
-        // Close database
-        await prisma.$disconnect();
-      } catch (err) {
-        Logger.debug('Error disconnecting database:', err);
-      }
+    //   try {
+    //     // Close database pool
+    //     const pool = require('./database').default;
+    //     await pool.end();
+    //     Logger.info('Database connection pool closed');
+    //   } catch (err) {
+    //     Logger.debug('Error closing database pool:', err);
+    //   }
       
-      server.close(() => {
-        Logger.info('✅ Server closed');
-        process.exit(0);
-      });
-    };
+    //   server.close(() => {
+    //     Logger.info('✅ Server closed');
+    //     process.exit(0);
+    //   });
+    // };
 
-    process.on('SIGTERM', shutdown);
-    process.on('SIGINT', shutdown);
+    // process.on('SIGTERM', shutdown);
+    // process.on('SIGINT', shutdown);
 
   } catch (err: any) {
     console.log(err);

@@ -1,27 +1,31 @@
 {
   "compilerOptions": {
     "target": "ES2020",
-    "lib": ["ES2021"],
     "module": "commonjs",
-    "outDir": "dist",
-    "rootDir": "./",
-    "moduleResolution": "node",
-    "baseUrl": "./",
+    "lib": ["ES2020"],
+    "outDir": "./dist",
+    "rootDir": "./src",
+    "baseUrl": "./src",
     "paths": {
-      "*": ["src/@types/*", "node_modules/*"],
-      "@Core/*": ["core/*"],
-      "@Config/*": ["config/*"]
+      "@/*": ["./*"],
+      "@config/*": ["config/*"],
+      "@middlewares/*": ["middlewares/*"],
+      "@types": ["types"],
+      "@utils/*": ["utils/*"],
+      "@api/*": ["api/*"]
     },
-    "experimentalDecorators": true,
-    "emitDecoratorMetadata": true,
-    "sourceMap": true,
-    "esModuleInterop": true,
-    "forceConsistentCasingInFileNames": true,
     "strict": true,
-    "strictPropertyInitialization": false,
+    "esModuleInterop": true,
     "skipLibCheck": true,
-    // "typeRoots": ["src/@types", "node_modules/@types"]
+    "forceConsistentCasingInFileNames": true,
+    "resolveJsonModule": true,
+    "moduleResolution": "node",
+    "sourceMap": true,
+    "declaration": true,
+    "declarationMap": true,
+    "allowSyntheticDefaultImports": true
   },
-  "exclude": ["node_modules"],
-  // "include": ["src"]
+  "include": ["src/**/*"],
+  "exclude": ["node_modules", "dist"]
 }
+

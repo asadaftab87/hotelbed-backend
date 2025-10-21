@@ -1,47 +1,26 @@
-import { createLogger, transports, format } from 'winston';
-import fs from 'fs';
-import path from 'path';
-import DailyRotateFile from 'winston-daily-rotate-file';
-import { env } from '../config/globals';
+import logger from '@utils/logger';
 
-let dir = env.lOGD_IRECTORY;
+class Logger {
+  static info(message: string, ...meta: any[]) {
+    logger.info(message, ...meta);
+  }
 
-if (!dir) dir = path.resolve('logs');
+  static error(message: string, ...meta: any[]) {
+    logger.error(message, ...meta);
+  }
 
-// create directory if it is not present
-if (!fs.existsSync(dir)) {
-  // Create the directory if it does not exist
-  fs.mkdirSync(dir);
+  static warn(message: string, ...meta: any[]) {
+    logger.warn(message, ...meta);
+  }
+
+  static debug(message: string, ...meta: any[]) {
+    logger.debug(message, ...meta);
+  }
+
+  static http(message: string, ...meta: any[]) {
+    logger.http(message, ...meta);
+  }
 }
 
-console.log(dir);
-const logLevel = env.NODE_ENV === 'development' ? 'debug' : 'warn';
+export default Logger;
 
-const options = {
-  file: {
-    level: logLevel,
-    filename: dir + '/%DATE%.log',
-    datePattern: 'YYYY-MM-DD',
-    zippedArchive: true,
-    timestamp: true,
-    handleExceptions: true,
-    humanReadableUnhandledException: true,
-    prettyPrint: true,
-    json: true,
-    maxSize: '20m',
-    colorize: true,
-    maxFiles: '14d',
-  },
-};
-
-export default createLogger({
-  transports: [
-    new transports.Console({
-      level: logLevel,
-      format: format.combine(format.errors({ stack: true }), format.prettyPrint()),
-    }),
-    new transports.File({ filename: 'combined.log', level: 'info', dirname: dir }),
-  ],
-  exceptionHandlers: [new DailyRotateFile(options.file)],
-  exitOnError: false, // do not exit on handled exceptions
-});

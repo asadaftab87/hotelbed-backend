@@ -1,6 +1,4 @@
-
 import express from 'express';
-
 import { initRestRoutes } from './routes';
 
 export class Server {

@@ -1,39 +1,32 @@
 import { Router } from 'express';
 import { HotelBedFileController } from './hotelBed.controller';
-export class HotelBedRoutes {
 
+export class HotelBedRoutes {
   readonly router: Router = Router();
-  readonly controller: HotelBedFileController = new HotelBedFileController()
+  readonly controller: HotelBedFileController = new HotelBedFileController();
 
   constructor() {
     this.initRoutes();
   }
 
   initRoutes(): void {
-    // Full flow (download + process + precompute + index)
+    /**
+     * Complete process: Download + Extract + Import
+     * GET /hotelbed/process
+     */
     this.router.get(
-      '/',
-      this.controller.getFullData
-    )
+      '/process',
+      this.controller.processData
+    );
 
-    // Manual inventory build (from current database data)
+    /**
+     * Direct import from existing extracted folder (Development only)
+     * GET /hotelbed/import-only
+     * Query: ?folder=folder_name (optional)
+     */
     this.router.get(
-      '/build-inventory',
-      this.controller.buildInventory
-    )
-
-    // Manual precompute only (after data is in DB)
-    this.router.get(
-      '/precompute',
-      this.controller.runPrecompute
-    )
-
-    // Manual search index update (after precompute)
-    this.router.get(
-      '/search-index',
-      this.controller.updateSearchIndex
-    )
-
+      '/import-only',
+      this.controller.importOnly
+    );
   }
-
 }

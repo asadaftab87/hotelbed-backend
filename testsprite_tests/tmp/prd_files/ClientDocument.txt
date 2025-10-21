@@ -1,0 +1,294 @@
+Sunsky Belgium — Hotelbeds Cache API — Checklist (EN)
+Generated on 01 September 2025 Page 1
+Hotelbeds Cache API — Checklist (English
+Translation)
+Typeset in DejaVuSans • Word wrapping fixed (no overflow)
+Checklist
+1) Scope & use-cases
+Context
+• Hotelbeds Cache is your source — this is normally your single source of truth.
+• However, you may sometimes want to verify prices or availability against the live
+Hotelbeds API (which provides real-time availability).
+Two approaches
+1. Validation-only (recommended in your v1)
+• You do not fetch live data for every search.
+• You use the cache for all results.
+• You can still compare cache prices with the live API once per day or per batch of
+hotels — if the differences > X%, you log this and export a report.
+• This keeps the architecture fast and simple.
+2. Live fallback (more complex, potentially v2)
+• If the cache indicates that something is available but you are unsure (or the
+customer selects a hotel room), you can make an on‑the‑fly call to the live API to
+double‑check.
+• This is slower and more complex, but reduces the risk that the cache diverges from
+reality.
+Proposal from my text
+• v1 (now): keep it “validation‑only”. So no live calls during searches, only batch
+checks.
+• v2 (later): if deviations become too large, you can add a feature flag
+(ENABLE_LIVE_FALLBACK). Then you can decide per environment (or even
+dynamically) whether to activate live fallback.
+2) Architecture (high‑level)
+1) Ingest (data intake & storage)
+Goal: get raw Hotelbeds cache files safely and idempotently into MySQL.
+Step‑by‑step
+1. Download ZIP (hourly via cron or job): fetch the Hotelbeds cache dump.
+2. Decompress: unzip to disk/stream.
+3. Parse: read records (JSON/CSV/XML) and convert to objects.
+4. Staging tables (temporary): insert everything 1‑to‑1, including hash/lastModified.
+Sunsky Belgium — Hotelbeds Cache API — Checklist (EN)
+Generated on 01 September 2025 Page 2
+5. Upsert into core schema: with INSERT ... ON DUPLICATE KEY UPDATE or MERGE you
+only update changed records.
+6. Derived tables: create/refresh derived tables that are useful for queries, such as:
+• cheapest_pp (cheapest price per person per hotel/category)
+• “availability windows” (summarized availability periods per rate/room instead of per
+day)
+Why staging?
+• You keep ingest idempotent & safe (no partial updates), and you can detect deltas
+(via hash/lastModified) before touching the “real” tables.
+2) Precompute (pre‑calculate what the UI often needs)
+Goal: precompute “From € p.p.” and similar aggregates so the API is blazing fast.
+What does this job do?
+• Iterates per hotel and per travel category (e.g., City Trip vs Other) over a sliding date
+window (e.g., today → +365 days).
+• Finds the next bookable period that satisfies the minimum nights (2 or 5).
+• Calculates total_price → price_pp = total_price / 2 (double occupancy).
+• Applies promotions (free nights, % discount, etc.), picks the cheapest board.
+• Stores the outcome in cheapest_pp(hotel_id, category_tag, start_date, nights, board,
+price_pp, currency, derived_at).
+Result
+• Your homepage/results page can immediately show “From €xxx p.p.” without heavy
+runtime computations.
+3) API layer (serving with a cache‑aside pattern)
+Goal: fast, stable APIs (Express/NestJS) on top of MySQL+Redis.
+Cache‑aside in one sentence
+• “Check Redis first; if it isn’t there → compute/fetch from DB → write back to Redis →
+return the result.”
+Concrete per endpoint
+• /search (Cheapest Price Result)
+1. Check Redis key chp:v1:{queryHash}.
+2. Cache miss? Query MySQL (optimized with derived tables and indexes).
+3. Put the result into Redis with TTL (e.g., 30–60 min) and serve it.
+• /hotels/{id}/matrix (Matrix Detail)
+• Cache key mx:v1:{hotel_id}:{checkIn}:{nights}:{occ} with a short TTL (e.g., 15
+min) and optionally SWR (stale‑while‑revalidate): serve stale data for up to 5 min while
+refreshing in the background.
+• /hotels/static (Static Data)
+• Cache key st:v1:{hotel_id}, TTL 24h.
+Why this way?
+Sunsky Belgium — Hotelbeds Cache API — Checklist (EN)
+Generated on 01 September 2025 Page 3
+• Low latency (Redis hits)
+• Scalable (DB only on miss)
+• Resilient (SWR prevents cold‑start spikes)
+Mini sequence diagram (example: /search)
+Client → API: GET /search?dest=PMI&nights=2
+API → Redis: GET chp:v1:hash(dest,nights,filters)
+[miss]
+API → MySQL: SELECT ... FROM cheapest_pp/search_index ...
+API → Redis: SETEX chp:v1:hash ... (TTL=3600)
+API → Client: 200 JSON (list of hotels with fromPricePP)
+Why this three‑part split is important
+• Ingest decouples “source origin” from “runtime”: faster and more reliable.
+• Precompute runs expensive logic once per batch instead of on every user request.
+• API + cache‑aside makes responses fast, predictable, and cost‑effective.
+Optional concretization (that you can paste into your doc)
+Cron/queue
+• Ingest: every 60 min (SYNC_INTERVAL_MIN via env); high season 30 or 15 min.
+• Precompute: after ingest (event‑driven) or every hour.
+• Queue: BullMQ with concurrency and rate limits.
+Redis keys (example)
+• chp:v1:{dest|zone|geo}:{checkin}:{nights}:{occ}:{filtersHash}
+• mx:v1:{hotel_id}:{checkin}:{nights}:{occ}
+• st:v1:{hotel_id}
+Indexes (MySQL)
+• inventory (hotel_id, calendar_date)
+• prices (hotel_id, calendar_date)
+• cheapest_pp (category_tag, hotel_id, price_pp)
+• search_index (destination_id, category_tag, price_pp) + FT index on hotels.name
+OpenAPI (high‑level)
+• /search → list hotels (cheapest per hotel + filters/paging/sort)
+• /hotels/{id}/matrix → rooms, rate plans, nightly breakdown, policies, promo info
+• /hotels/static?ids=... → descriptions, photos, amenities, chain, category, geo,
+landmarks
+3) Database (MySQL) – core schema
+Clarify: your discounts/promotions/stop‑sales model & combinability rules.
+➡️ Table proposal (core):
+Sunsky Belgium — Hotelbeds Cache API — Checklist (EN)
+Generated on 01 September 2025 Page 4
+• hotels(id, name, country_code, destination_id, zone_id, chain_id, category, latitude,
+longitude, beach_distance_m, center_distance_m, ...)
+• hotel_amenities(hotel_id, amenity_code) (M:N)
+• landmarks(id, name, type, lat, lon) and hotel_landmarks(hotel_id, landmark_id,
+distance_m)
+• rooms(id, hotel_id, room_code, occupancy_min, occupancy_max, child_allowed, ...)
+• rate_plans(id, hotel_id, board_code, refundable, cancellation_policy_json,
+restrictions_json)
+• inventory(calendar_date, hotel_id, room_id, rate_plan_id, allotment, stop_sale,
+release_days, cta, ctd, min_nights, max_nights) ← day‑level rules
+• prices(calendar_date, hotel_id, room_id, rate_plan_id, base_net, taxes_json,
+fees_json, currency) ← per‑night
+• promotions(id, hotel_id, scope, kind, value, combinable_with, valid_from, valid_to,
+min_nights, remark)
+• fx_rates(date, from_currency, to_currency, rate)
+• Derived/precompute:
+• cheapest_pp(hotel_id, category_tag, start_date, nights, board_code, price_pp,
+currency, rate_plan_id, room_id, derived_at)
+• search_index(hotel_id, destination_id, category_tag, rating, min_price_pp,
+max_price_pp, last_updated) (aggregates for filters/sorting)
+• Staging: identical columns as source files + ingested_at, hash for idempotent
+upserts.
+Indexing (important):
+• inventory (hotel_id, calendar_date); prices (hotel_id, calendar_date); composite on
+(destination_id, category_tag, price_pp) in search_index; FULLTEXT on hotels.name.
+4) Sync process (ZIP → DB)
+Proposal:
+• Pipeline: Download → verify checksum → unzip → stream‑parse → bulk insert into
+staging → MERGE/INSERT ... ON DUPLICATE KEY UPDATE into core.
+• Delta detection: compare hash per record or use source lastModified.
+• Orchestration: BullMQ/Agenda or cron; idempotency via ingest batch id.
+• Configuration: SYNC_INTERVAL_MIN=60 (prod), 15/30 in high season; fail‑fast + retry
+with backoff.
+• Validation: sample hotels (N=100) → diff between cache price and recomputed price;
+tolerance e.g., ≤ €0.05 or 0.1%.
+5) Redis caching strategy
+Key design:
+• Cheapest list: chp:v1:{dest|zone|geo}:{checkin}:{nights}:{occ}:{filtersHash} →
+JSON (hotel_id, price_pp, currency, board, badge_promotions...) TTL 30–60 min.
+• Hotel cheapest pp (precompute): chp:h:v1:{hotel_id}:{category_tag} → (price_pp,
+start_date, nights, board) TTL 24h, refresh async.
+• Matrix detail: mx:v1:{hotel_id}:{checkin}:{nights}:{occ} TTL 15 min; SWR: serve
+stale ≤ 5 min and refresh async.
+• Static: st:v1:{hotel_id} TTL 24h.
+Sunsky Belgium — Hotelbeds Cache API — Checklist (EN)
+Generated on 01 September 2025 Page 5
+• Cache‑busting: version prefix v1; invalidate by bumping the version on schema/logic
+change or targeted delete on delta sync.
+6) APIs & filters
+Endpoints (OpenAPI sketch):
+1) Cheapest Price Result
+GET /search
+q: destination | geo | zone | hotelId
+checkIn, nights OR checkIn, checkOut
+occupancy (adults, children, childAges[])
+filters: name, board[], category[], accommodationType[], lastMinute, promotion,
+landmarkId[],
+country, destination, zone, ratingMin, amenities[], priceMin, priceMax,
+discountTypes[], chain[], beachDistanceMax, centerDistanceMax, kidsFacilities[]
+sort: price_pp|rating|distance|promo DESC/ASC
+page, pageSize
+Response (per hotel): hotel_id, name, price_pp, currency, board_code, start_date, nights,
+has_promo, rating, distances{beach,center}, badges[]
+2) Hotel Matrix Detail
+GET /hotels/{id}/matrix?checkIn=YYYY-MM-DD&nights=INT&occupancy=2
+Response: list of rooms/rate plans with: room_name, board, total_price, price_pp,
+currency, nightly_breakdown[], policies{cancellation, prepayment},
+restrictions{min/max, cta/ctd, release}, promotion_applied{type,value,free_nights},
+combinability_note
+3) Static Data
+GET /hotels/static?ids=1,2,3
+Response: descriptions, amenities, photos, chain, category, geo, landmarks/distances.
+Filters performance:
+• Pre‑aggregate into search_index.
+• Use bitmap/JSON‑overlap indexes for amenities[] (MySQL JSON + generated columns
+for popular filters).
+• Pagination with keyset (last_id, last_price) instead of offset for low latency.
+7) Business/pricing logic (core rules)
+➡️ Proposal (deterministic order):
+1. Stop‑sale / allotment / release / CTA/CTD → filters out what is not bookable.
+2. Min/Max nights → respect per rate/room.
+3. Base price = sum of nights (base_net + applicable fees/taxes if gross is shown).
+Sunsky Belgium — Hotelbeds Cache API — Checklist (EN)
+Generated on 01 September 2025 Page 6
+4. Promotions in fixed order: free nights → percentage → absolute discount → coupons.
+• Enforce combinable_with matrix; log reason for rejection.
+5. Occupancy: price per room → price_pp = total / occupancy_used (default 2).
+6. Currency: if needed, apply fx_rates at quote date = check‑in; round to 0.01.
+7. Policy: display the strictest cancellation window and a prepayment summary.
+8) Objective “From € p.p.” per travel category
+Algorithm (precompute job):
+• For each hotel & category:
+• Find earliest checkIn ≥ today within horizon (e.g., 365 days) where nights ≥
+minNights(category) and it’s bookable.
+• Compute price_pp with promotions & board upgrade to the cheapest board.
+• Store (price_pp, start_date, nights, board) in cheapest_pp.
+• Frontend result string:
+• City: From €{price_pp} p.p. | 3 days / 2 nights
+• Other: From €{price_pp} p.p. | {minNights+1} days / {minNights} nights
+9) Search‑engine case (exact dates/capacity)
+➡️ Proposed fallback:
+1. Show the next cheapest room for the same dates (same hotel).
+2. If nothing is available: the next available date (same hotel, same nights) with label
+“Next available date”.
+3. Store both options in alt_suggestions[] in the API response.
+10) Idempotency & concurrency
+➡️ Proposal:
+• Ingest jobs with batch_id + idempotent upsert; Redis distributed lock (SET NX PX)
+per hotel during precompute.
+• API request‑id in response headers; retriable GETs; POST/PUT not needed in v1.
+11) Errors, timeouts & retries
+➡️ Proposal:
+• HTTP: 200/206/400/404/409/422/429/500; custom code & trace_id.
+• Timeouts: DB 2–3s; upstream download 30–60s; API route budget 300–800ms p95.
+• Retries: ingest (exponential backoff, max 5); API no automatic retries beyond cache
+refresh.
+12) Performance targets
+➡️ Targets:
+• /search p95 ≤ 500 ms (with Redis hit), ≤ 1200 ms (cold).
+• /matrix p95 ≤ 700 ms (with Redis hit).
+• Precompute vol. 10k hotels: < 10 min per full cycle; delta << 1 min.
+13) Security & compliance (GDPR)
+Sunsky Belgium — Hotelbeds Cache API — Checklist (EN)
+Generated on 01 September 2025 Page 7
+➡️ Proposal:
+• Auth: API key + IP allowlist in v1; mTLS / OAuth2 in v2.
+• Secrets via env + secret manager; rotation every 90 days.
+• PII: virtually no PII in v1; still establish DPA & data‑retention policies; audit log for
+config changes.
+• Rate limit: 200 rpm / IP; WAF (Nginx/Kong) with basic bot protection.
+14) Monitoring, logging, alerting
+➡️ Proposal:
+• Structured logs (Winston) with trace_id, hotel_id, batch_id.
+• Metrics: Prometheus counters (sync_records, promos_applied), histograms (latency),
+gauges (cache hit ratio).
+• Dashboards: latencies per endpoint, cache hit %, ingest lag, % diff vs cache.
+• Alerts: cache hit < 70%, ingest lag > 2h, error rate > 2%, diff % > 0.5%.
+15) CI/CD, versions & compatibility
+➡️ Proposal:
+• OpenAPI as the source of truth → generate Postman.
+• Semver for the API (v1 prefix in path & Redis).
+• Zero‑downtime deploy (K8s / blue‑green); migrations via prisma migrate/knex with a
+back‑out plan.
+16) Test plan
+➡️ Levels:
+• Unit: pricing engine, promotion combinations, CTA/CTD, min/max nights.
+• Contract: OpenAPI schema validation (Dredd / Schemathesis).
+• E2E: seed 10 representative hotels; queries with every filter combination.
+• Sandbox cases: stop‑sale, free nights (n=1), non‑ref vs ref, kids policies.
+• Data quality: diff tests cache vs computed.
+17) Frontend compatibility
+➡️ Proposed responses:
+• /search item:
+{
+"hotelId": 123,
+"name": "Hotel Nice",
+"fromPricePP": 155.50,
+"currency": "EUR",
+"board": "RO",
+"startDate": "2025-10-12",
+Sunsky Belgium — Hotelbeds Cache API — Checklist (EN)
+Generated on 01 September 2025 Page 8
+"nights": 2,
+"rating": 8.7,
+"distances": {"beach": 250, "center": 1200},
+"badges": ["PROMO","FREE_NIGHTS"]
+}
+• /matrix also includes nightlyBreakdown[] and policies{} for UI tooltips.
+Summary of key open decisions
+1. Live API fallback: validation‑only (recommended) or also runtime fallback?
+2. Promotions combinations: need an exact combinability table.
+3. Currency: fixed EUR output (with internal FX at check‑in) or multi‑currency?
+4. “Landmark/distance” filter: set of supported landmark types and max radius (km).
+5. Kids facilities: clear mapping to amenity codes.
+6. Retention: how long to keep derived caches/ingest ZIPs (e.g., 14/30 days)?

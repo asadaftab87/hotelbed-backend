@@ -1,16 +1,20 @@
 import { Router, Request, Response, NextFunction } from 'express';
 import express from 'express';
-import { NotFoundError } from '../../core/ApiError';
+import { NotFoundError } from '@/core/ApiError';
 import { HotelBedRoutes } from './hotelBed/hotelBed.routes';
-import { SearchRoutes } from './search/search.routes';
-import { HotelsRoutes } from './hotels/hotels.routes';
-import { addTraceId } from '../../middleware/cacheAside';
-import { setupSwagger } from '../../middleware/swagger';
-// import { AccessRoutes } from './access/access.routes';
-// import { CoupleRoutes } from './couple/couple.routes';
+import { addTraceId } from '@middlewares/cacheAside';
+import { setupSwagger } from '@middlewares/swagger';
+import monitoringController from '@/controllers/monitoringController';
+import Logger from '@/core/Logger';
 
-
-export const registerApiRoutes = (router: Router, prefix = '', appRoutesPrefix = '', superAdminPrefix = '', adminPrefix = '', userPrefix = ''): void => {
+export const registerApiRoutes = (
+  router: Router,
+  prefix = '',
+  appRoutesPrefix = '',
+  superAdminPrefix = '',
+  adminPrefix = '',
+  userPrefix = ''
+): void => {
   // Add trace ID to all requests
   router.use(addTraceId);
 
@@ -24,39 +28,56 @@ export const registerApiRoutes = (router: Router, prefix = '', appRoutesPrefix =
    *     responses:
    *       200:
    *         description: Server is running
-   *         content:
-   *           text/plain:
-   *             schema:
-   *               type: string
-   *               example: "Hotel Bed Backend Server V1 Running ❤"
    */
   router.get(prefix, (req: Request, res: Response) => {
     res.json({
       success: true,
-      message: 'Hotelbeds Cache API v1.0.0',
+      message: 'Hotel Bed Backend API v1.0.0',
       status: 'running',
+      version: '1.0.0',
       endpoints: {
-        documentation: `${req.protocol}://${req.get('host')}/api/v1/docs`,
-        search: `${req.protocol}://${req.get('host')}/api/v1/search`,
-        hotels: `${req.protocol}://${req.get('host')}/api/v1/hotels`,
+        documentation: `${req.protocol}://${req.get('host')}${prefix}/docs`,
+        hotelbed: `${req.protocol}://${req.get('host')}${prefix}/hotelbed`,
+        monitoring: `${req.protocol}://${req.get('host')}${prefix}/monitoring`,
         metrics: `${req.protocol}://${req.get('host')}/metrics`,
       },
     });
   });
-  
-  // Swagger Documentation (must be BEFORE route prefix)
+
+  // Swagger Documentation
   const docsRouter = express.Router();
   setupSwagger(docsRouter);
   router.use(`${prefix}`, docsRouter);
-  
-  // Hotelbeds Cache API Routes (per client requirements)
-  router.use(`${prefix}/search`, new SearchRoutes().router);
-  router.use(`${prefix}/hotels`, new HotelsRoutes().router);
-  
-  // Legacy/Admin routes
-  // router.use(`${prefix}/auth`, new AccessRoutes().router)
-  // router.use(`${prefix}/couple`, new CoupleRoutes().router)
-  router.use(`${prefix}/hotelbed`, new HotelBedRoutes().router);
 
+  // API Routes
+  Logger.info(`Registering routes on ${prefix}`);
+  router.use(`${prefix}/hotelbed`, new HotelBedRoutes().router);
+  
+  // Monitoring routes
+  router.get(`${prefix}/monitoring/health`, monitoringController.healthCheck.bind(monitoringController));
+  router.get(`${prefix}/monitoring/health/detailed`, monitoringController.detailedHealthCheck.bind(monitoringController));
+  router.get(`${prefix}/monitoring/metrics`, monitoringController.systemMetrics.bind(monitoringController));
+  router.get(`${prefix}/monitoring/stats`, monitoringController.appStats.bind(monitoringController));
+  router.post(`${prefix}/monitoring/cache/clear`, monitoringController.clearCache.bind(monitoringController));
+
+  // User-specific routes
+  if (userPrefix) {
+    Logger.info(`Registering user routes on ${userPrefix}`);
+    // router.use(`${userPrefix}/profile`, new UserRoutes().router);
+  }
+
+  // Admin routes
+  if (adminPrefix) {
+    Logger.info(`Registering admin routes on ${adminPrefix}`);
+    // router.use(`${adminPrefix}/dashboard`, new AdminRoutes().router);
+  }
+
+  // SuperAdmin routes
+  if (superAdminPrefix) {
+    Logger.info(`Registering superadmin routes on ${superAdminPrefix}`);
+    // router.use(`${superAdminPrefix}/settings`, new SuperAdminRoutes().router);
+  }
+
+  // 404 handler
   router.use((req: Request, res: Response, next: NextFunction) => next(new NotFoundError()));
-}
+};
