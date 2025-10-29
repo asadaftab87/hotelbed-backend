@@ -121,7 +121,7 @@ export class HotelBedFileRepository {
 
       const totalSize = parseInt(response.headers['content-length'] || '0', 10);
       const totalMB = (totalSize / 1024 / 1024).toFixed(2);
-      
+
       Logger.info('[DOWNLOAD] Download initiated', {
         totalSize: `${totalMB} MB`,
         contentType: response.headers['content-type']
@@ -141,11 +141,11 @@ export class HotelBedFileRepository {
         const percent = totalSize > 0 ? Math.floor((downloadedSize / totalSize) * 100) : 0;
         const elapsedSeconds = (Date.now() - startTime) / 1000;
         const speedMBps = downloadedMB / elapsedSeconds;
-        
-        const shouldLog = 
-          (percent >= lastLoggedPercent + 5) || 
+
+        const shouldLog =
+          (percent >= lastLoggedPercent + 5) ||
           (downloadedMB >= lastLoggedMB + 10);
-        
+
         if (shouldLog) {
           if (totalSize > 0) {
             Logger.info('[DOWNLOAD] Progress update', {
@@ -160,7 +160,7 @@ export class HotelBedFileRepository {
               speed: `${speedMBps.toFixed(2)} MB/s`
             });
           }
-          
+
           this.processingStatus.progress = percent;
           lastLoggedPercent = percent;
           lastLoggedMB = downloadedMB;
@@ -199,14 +199,14 @@ export class HotelBedFileRepository {
       };
     } catch (error: any) {
       this.processingStatus.currentAction = null;
-      
+
       Logger.error('[DOWNLOAD] Download failed', {
         error: error.message,
         url: `${env.HOTELBEDS_BASE_URL}${env.HOTELBEDS_CACHE_ENDPOINT}`,
         statusCode: error.response?.status,
         statusText: error.response?.statusText
       });
-      
+
       throw new Error(`Download failed: ${error.message}`);
     }
   }
@@ -250,7 +250,7 @@ export class HotelBedFileRepository {
         Logger.info('[EXTRACT] Cleaning existing extraction directory', { path: extractDir });
         fs.rmSync(extractDir, { recursive: true, force: true });
       }
-      
+
       fs.mkdirSync(extractDir, { recursive: true });
       Logger.info('[EXTRACT] Created extraction directory', { path: extractDir });
 
@@ -293,8 +293,8 @@ export class HotelBedFileRepository {
           Logger.info('[EXTRACT] Extraction progress', {
             progress: `${percent}%`,
             extracted: `${extractedCount} / ${totalEntries}`,
-            currentFile: entry.entryName.length > 50 
-              ? '...' + entry.entryName.slice(-50) 
+            currentFile: entry.entryName.length > 50
+              ? '...' + entry.entryName.slice(-50)
               : entry.entryName
           });
           lastLoggedPercent = percent;
@@ -332,12 +332,12 @@ export class HotelBedFileRepository {
       };
     } catch (error: any) {
       this.processingStatus.currentAction = null;
-      
+
       Logger.error('[EXTRACT] Extraction failed', {
         error: error.message,
         zipFile: path.basename(zipFilePath)
       });
-      
+
       throw new Error(`Extraction failed: ${error.message}`);
     }
   }
@@ -346,16 +346,55 @@ export class HotelBedFileRepository {
   // DATABASE IMPORT METHODS
   // ============================================
 
-  /**
-   * Clean ALL database tables before fresh import
-   * Deletes all existing data to ensure clean import
-   */
   private async cleanDatabase(): Promise<void> {
     try {
+      console.log('='.repeat(60));
+      console.log('🧹 STARTING DATABASE CLEANUP');
+      console.log('='.repeat(60));
       Logger.info('[CLEAN] Starting complete database cleanup');
 
+      const startTime = Date.now();
+
+      // First, check table sizes for estimation
+      console.log('📊 Step 1: Analyzing database size...');
+      try {
+        const [sizeInfo] = await pool.query(`
+          SELECT 
+            table_name,
+            table_rows,
+            ROUND(((data_length + index_length) / 1024 / 1024), 2) AS size_mb
+          FROM information_schema.TABLES 
+          WHERE table_schema = DATABASE()
+          ORDER BY (data_length + index_length) DESC
+        `) as any;
+
+        const totalRows = sizeInfo.reduce((sum: number, t: any) => sum + (t.table_rows || 0), 0);
+        const totalSize = sizeInfo.reduce((sum: number, t: any) => sum + (t.size_mb || 0), 0);
+
+        console.log(`   📈 Total estimated rows: ${totalRows.toLocaleString()}`);
+        console.log(`   💾 Total database size: ${totalSize.toFixed(2)} MB`);
+        console.log(`   ⏱️  Estimated cleanup time: ${Math.ceil(totalRows / 1000)} seconds`);
+
+        // Show largest tables
+        console.log('\n   📊 Largest tables:');
+        sizeInfo.slice(0, 5).forEach((t: any) => {
+          console.log(`      • ${t.table_name}: ${(t.table_rows || 0).toLocaleString()} rows (${t.size_mb} MB)`);
+        });
+      } catch (err) {
+        console.log('   ⚠️  Could not analyze size, continuing...');
+      }
+
       // Disable foreign key checks temporarily
+      console.log('\n⚙️  Step 2: Disabling foreign key checks...');
       await pool.query('SET FOREIGN_KEY_CHECKS = 0');
+      console.log('✅ Foreign key checks disabled');
+
+      // Additional optimizations for large datasets
+      console.log('\n⚙️  Step 3: Applying performance optimizations...');
+      await pool.query('SET SESSION sql_log_bin = 0'); // Disable binary logging if allowed
+      await pool.query('SET SESSION unique_checks = 0'); // Disable unique checks
+      await pool.query('SET SESSION autocommit = 1'); // Ensure autocommit is on
+      console.log('✅ Performance optimizations applied');
 
       // Truncate all tables in reverse order (to handle foreign keys)
       const tables = [
@@ -388,32 +427,125 @@ export class HotelBedFileRepository {
         'processing_queue'
       ];
 
+      console.log(`\n📋 Step 4: Preparing to truncate ${tables.length} tables...`);
+
+      // Execute truncates in parallel batches for maximum speed
+      console.log('\n🚀 Step 5: Executing parallel truncate operations...');
+      console.log('Progress:\n');
+      console.time('⏱️  Total truncate duration');
+
       let cleaned = 0;
-      for (const table of tables) {
-        try {
-          await pool.query(`TRUNCATE TABLE ${table}`);
-          cleaned++;
-          Logger.info('[CLEAN] Table cleaned', { table });
-        } catch (error: any) {
-          // Table might not exist, continue
-          Logger.warn('[CLEAN] Failed to clean table', { 
-            table, 
-            error: error.message 
-          });
+      let failed = 0;
+      const batchSize = 10; // Increased batch size for faster processing
+      const failedTables: string[] = [];
+
+      for (let i = 0; i < tables.length; i += batchSize) {
+        const batch = tables.slice(i, i + batchSize);
+        const batchNum = Math.floor(i / batchSize) + 1;
+        const totalBatches = Math.ceil(tables.length / batchSize);
+
+        const batchStartTime = Date.now();
+        console.log(`📦 Batch ${batchNum}/${totalBatches}: Processing ${batch.length} tables...`);
+
+        const batchResults = await Promise.allSettled(
+          batch.map(async (table) => {
+            const tableStartTime = Date.now();
+            try {
+              // Try TRUNCATE first (faster)
+              await pool.query(`TRUNCATE TABLE \`${table}\``);
+              const tableDuration = Date.now() - tableStartTime;
+              cleaned++;
+              const progress = ((cleaned / tables.length) * 100).toFixed(1);
+              console.log(`   ✓ [${cleaned}/${tables.length}] ${progress}% - ${table} (${tableDuration}ms)`);
+              Logger.info('[CLEAN] Table cleaned', { table, durationMs: tableDuration });
+              return { table, success: true, duration: tableDuration };
+            } catch (err: any) {
+              // If TRUNCATE fails, try DELETE (slower but more reliable)
+              try {
+                console.log(`   ⚠️  TRUNCATE failed for ${table}, trying DELETE...`);
+                await pool.query(`DELETE FROM \`${table}\``);
+                const tableDuration = Date.now() - tableStartTime;
+                cleaned++;
+                const progress = ((cleaned / tables.length) * 100).toFixed(1);
+                console.log(`   ✓ [${cleaned}/${tables.length}] ${progress}% - ${table} (${tableDuration}ms, DELETE)`);
+                return { table, success: true, duration: tableDuration, method: 'DELETE' };
+              } catch (deleteErr: any) {
+                failed++;
+                failedTables.push(table);
+                console.log(`   ✗ Failed - ${table}: ${deleteErr.message}`);
+                Logger.warn('[CLEAN] Failed to clean table', { table, error: deleteErr.message });
+                return { table, success: false, error: deleteErr.message };
+              }
+            }
+          })
+        );
+
+        const batchDuration = Date.now() - batchStartTime;
+        const batchSucceeded = batchResults.filter(r => r.status === 'fulfilled').length;
+
+        if (batchSucceeded === batch.length) {
+          console.log(`   ✅ Batch ${batchNum} completed in ${(batchDuration / 1000).toFixed(2)}s\n`);
+        } else {
+          console.log(`   ⚠️  Batch ${batchNum}: ${batchSucceeded}/${batch.length} succeeded (${(batchDuration / 1000).toFixed(2)}s)\n`);
         }
       }
 
-      // Re-enable foreign key checks
-      await pool.query('SET FOREIGN_KEY_CHECKS = 1');
+      console.timeEnd('⏱️  Total truncate duration');
+      console.log('✅ All tables processed');
 
-      Logger.info('[CLEAN] Database cleanup completed', { 
+      // Re-enable settings
+      console.log('\n⚙️  Step 6: Restoring database settings...');
+      await pool.query('SET FOREIGN_KEY_CHECKS = 1');
+      await pool.query('SET SESSION unique_checks = 1');
+      await pool.query('SET SESSION sql_log_bin = 1');
+      console.log('✅ Database settings restored');
+
+      const duration = Date.now() - startTime;
+
+      console.log('\n' + '='.repeat(60));
+      if (failed === 0) {
+        console.log('✨ DATABASE CLEANUP COMPLETED SUCCESSFULLY');
+      } else {
+        console.log('⚠️  DATABASE CLEANUP COMPLETED WITH WARNINGS');
+      }
+      console.log('='.repeat(60));
+      console.log(`📊 Statistics:`);
+      console.log(`   - Tables cleaned: ${cleaned}/${tables.length}`);
+      console.log(`   - Failed: ${failed}`);
+      console.log(`   - Success rate: ${((cleaned / tables.length) * 100).toFixed(1)}%`);
+      console.log(`   - Total duration: ${(duration / 1000).toFixed(2)} seconds (${Math.floor(duration / 60000)}m ${Math.floor((duration % 60000) / 1000)}s)`);
+      console.log(`   - Average per table: ${(duration / tables.length).toFixed(0)} ms`);
+
+      if (failed > 0) {
+        console.log(`\n   ❌ Failed tables:`);
+        failedTables.forEach(table => console.log(`      • ${table}`));
+      }
+      console.log('='.repeat(60));
+
+      Logger.info('[CLEAN] Database cleanup completed', {
         tablesCleaned: cleaned,
-        totalTables: tables.length
+        totalTables: tables.length,
+        failed,
+        successRate: ((cleaned / tables.length) * 100).toFixed(1),
+        durationMs: duration,
+        durationSec: (duration / 1000).toFixed(2)
       });
+
+      if (failed > 0) {
+        console.warn(`\n⚠️  Warning: ${failed} table(s) failed to clean. Review the logs above.`);
+      }
+
     } catch (error: any) {
-      Logger.error('[CLEAN] Database cleanup failed', { 
+      console.error('\n' + '='.repeat(60));
+      console.error('💥 CRITICAL ERROR: DATABASE CLEANUP FAILED');
+      console.error('='.repeat(60));
+      console.error('Error message:', error.message);
+      console.error('Stack trace:', error.stack);
+      console.error('='.repeat(60));
+
+      Logger.error('[CLEAN] Database cleanup failed', {
         error: error.message,
-        stack: error.stack 
+        stack: error.stack
       });
       throw new Error(`Database cleanup failed: ${error.message}`);
     }
@@ -449,7 +581,7 @@ export class HotelBedFileRepository {
         categories: { imported: 0, failed: 0, duration: '0s' },
         chains: { imported: 0, failed: 0, duration: '0s' },
         destinations: { imported: 0, failed: 0, duration: '0s' },
-        hotelDetails: { 
+        hotelDetails: {
           files: 0,
           contracts: 0,
           roomAllocations: 0,
@@ -517,7 +649,7 @@ export class HotelBedFileRepository {
 
       const duration = ((Date.now() - startTime) / 1000).toFixed(2);
 
-      const totalRecords = 
+      const totalRecords =
         importResults.hotels.imported +
         importResults.categories.imported +
         importResults.chains.imported +
@@ -549,12 +681,12 @@ export class HotelBedFileRepository {
       };
     } catch (error: any) {
       this.processingStatus.currentAction = null;
-      
+
       Logger.error('[IMPORT] Database import failed', {
         error: error.message,
         stack: error.stack
       });
-      
+
       throw new Error(`Database import failed: ${error.message}`);
     }
   }
@@ -574,7 +706,7 @@ export class HotelBedFileRepository {
     try {
       const fileContent = fs.readFileSync(hotelFile, 'utf-8');
       const lines = fileContent.split('\n').filter(line => line.trim() && !line.startsWith('{'));
-      
+
       Logger.info('[IMPORT] Hotels file loaded', {
         totalLines: lines.length,
         file: 'GHOT_F'
@@ -674,7 +806,7 @@ export class HotelBedFileRepository {
     try {
       const fileContent = fs.readFileSync(categoryFile, 'utf-8');
       const lines = fileContent.split('\n').filter(line => line.trim() && !line.startsWith('{'));
-      
+
       Logger.info('[IMPORT] Categories file loaded', {
         totalLines: lines.length,
         file: 'GCAT_F'
@@ -748,7 +880,7 @@ export class HotelBedFileRepository {
     try {
       const fileContent = fs.readFileSync(chainFile, 'utf-8');
       const lines = fileContent.split('\n').filter(line => line.trim() && !line.startsWith('{'));
-      
+
       Logger.info('[IMPORT] Chains file loaded', {
         totalLines: lines.length,
         file: 'GTTO_F'
@@ -820,7 +952,7 @@ export class HotelBedFileRepository {
     try {
       const fileContent = fs.readFileSync(apiFile, 'utf-8');
       const lines = fileContent.split('\n').filter(line => line.trim() && !line.startsWith('{'));
-      
+
       Logger.info('[IMPORT] API metadata file loaded', {
         totalLines: lines.length,
         file: 'AIF2_F'
@@ -835,7 +967,7 @@ export class HotelBedFileRepository {
           if (parts.length >= 10) {
             // Extract features (last part with key~value pairs)
             const features = parts.slice(10).join(':');
-            
+
             const query = `
               INSERT IGNORE INTO api_metadata 
               (api_version, total_hotels, environment, region, country, api_type, is_active, timestamp, next_api_version, features)
@@ -889,7 +1021,7 @@ export class HotelBedFileRepository {
     try {
       const fileContent = fs.readFileSync(destFile, 'utf-8');
       const lines = fileContent.split('\n').filter(line => line.trim() && !line.startsWith('{'));
-      
+
       Logger.info('[IMPORT] Destinations file loaded', {
         totalLines: lines.length,
         file: 'IDES_F'
@@ -908,14 +1040,14 @@ export class HotelBedFileRepository {
             // Clean line from any carriage returns or whitespace
             const cleanLine = line.replace(/\r/g, '').trim();
             const parts = cleanLine.split(':');
-            
+
             if (parts.length >= 3) {
               const code = parts[0]?.trim() || null;
               const countryCode = parts[1]?.trim() || null;
               const isAvailable = parts[2]?.trim() || null;
               // Name field doesn't exist in IDES_F file, use code as fallback
               const name = parts[3]?.trim() || code;
-              
+
               values.push([code, countryCode, isAvailable, name]);
             }
           } catch (error) {
@@ -955,100 +1087,311 @@ export class HotelBedFileRepository {
   }
 
   /**
-   * Import ALL hotel detail files (150k+ files with complete data)
-   */
+  * Import ALL hotel detail files (150k+ files with complete data)
+  */
   private async importHotelDetailFiles(extractedPath: string): Promise<any> {
     const startTime = Date.now();
     const destinationsDir = path.join(extractedPath, 'DESTINATIONS');
 
+    console.log('\n' + '='.repeat(70));
+    console.log('🏨 STARTING HOTEL DETAIL FILES IMPORT');
+    console.log('='.repeat(70));
+
     if (!fs.existsSync(destinationsDir)) {
+      console.log('❌ Destinations directory not found:', destinationsDir);
       Logger.warn('[IMPORT] Destinations directory not found', { path: destinationsDir });
       return { files: 0, failed: 0, duration: '0s' };
     }
 
     try {
       // Get all destination folders
+      console.log('📂 Step 1: Scanning destinations directory...');
       const destFolders = fs.readdirSync(destinationsDir).filter(f => {
         return fs.lstatSync(path.join(destinationsDir, f)).isDirectory();
       });
+      console.log(`✅ Found ${destFolders.length} destination folders`);
+
+      // Count total files for progress tracking
+      console.log('\n📊 Step 2: Counting total hotel files...');
+      let totalFiles = 0;
+      const destFileCounts: { [key: string]: number } = {};
+
+      destFolders.forEach(destFolder => {
+        const destPath = path.join(destinationsDir, destFolder);
+        const files = fs.readdirSync(destPath).filter(f => {
+          return fs.lstatSync(path.join(destPath, f)).isFile();
+        });
+        destFileCounts[destFolder] = files.length;
+        totalFiles += files.length;
+      });
+
+      console.log(`✅ Total files to process: ${totalFiles.toLocaleString()}`);
+      console.log(`   Average files per destination: ${Math.round(totalFiles / destFolders.length)}`);
+      console.log(`   Estimated processing time: ${Math.ceil(totalFiles / 100)} - ${Math.ceil(totalFiles / 50)} minutes`);
 
       Logger.info('[IMPORT] Starting hotel detail files import', {
         totalDestinations: destFolders.length,
+        totalFiles: totalFiles,
         note: 'This will process 150k+ files - will take significant time'
       });
 
       let processedDestinations = 0;
-      
-      // ⚡ PERFORMANCE OPTIMIZATION: Disable FK checks for MASSIVE speed boost
-      Logger.info('[IMPORT] Disabling foreign key checks for speed');
-      await pool.query('SET FOREIGN_KEY_CHECKS = 0');
-      await pool.query('SET AUTOCOMMIT = 0'); // Batch transactions
+      let processedFiles = 0;
+      let failedFiles = 0;
+      const failedFilesList: Array<{ file: string; path: string; error: string }> = [];
 
-      // 🔥🔥🔥 ULTRA SPEED MODE: 300 files + parallel destinations!
-      const FILE_PARALLEL_BATCH = 300; // 3X FASTER!
-      const DEST_PARALLEL_BATCH = 5; // Process 5 destinations at once!
+      // ⚡ PERFORMANCE OPTIMIZATION: Disable FK checks for MASSIVE speed boost
+      console.log('\n⚙️  Step 3: Applying database performance optimizations...');
+      console.log('   • Disabling foreign key checks...');
+      await pool.query('SET FOREIGN_KEY_CHECKS = 0');
+      console.log('   • Disabling autocommit for batch transactions...');
+      await pool.query('SET AUTOCOMMIT = 0');
+      console.log('   • Disabling unique checks...');
+      await pool.query('SET UNIQUE_CHECKS = 0');
+      console.log('   • Increasing bulk insert buffer...');
+      await pool.query('SET SESSION bulk_insert_buffer_size = 256 * 1024 * 1024'); // 256MB
+      console.log('   • Disabling binary logging (if permitted)...');
+      try {
+        await pool.query('SET SESSION sql_log_bin = 0');
+        console.log('   ✅ Binary logging disabled');
+      } catch {
+        console.log('   ⚠️  Binary logging could not be disabled (permissions)');
+      }
+      console.log('✅ Performance optimizations applied');
+
+      // 🔥🔥🔥 ULTRA SPEED MODE: Maximized parallelism!
+      const FILE_PARALLEL_BATCH = 10000; // Process 10000 files at once! 🚀
+      const DEST_PARALLEL_BATCH = 500; // Process 500 destinations at once! 🚀
+
+      console.log('\n🚀 Step 4: Starting parallel import process...');
+      console.log(`   Configuration:`);
+      console.log(`   • File parallel batch: ${FILE_PARALLEL_BATCH}`);
+      console.log(`   • Destination parallel batch: ${DEST_PARALLEL_BATCH}`);
+      console.log(`   • Total batches: ~${Math.ceil(destFolders.length / DEST_PARALLEL_BATCH)}`);
+      console.log('\n' + '─'.repeat(70));
+
+      const importStartTime = Date.now();
+      let lastProgressUpdate = Date.now();
+      const progressInterval = 10000; // Update every 10 seconds (less console overhead)
 
       // Process destinations in parallel batches
       for (let d = 0; d < destFolders.length; d += DEST_PARALLEL_BATCH) {
         const destBatch = destFolders.slice(d, d + DEST_PARALLEL_BATCH);
-        
+        const batchNum = Math.floor(d / DEST_PARALLEL_BATCH) + 1;
+        const totalBatches = Math.ceil(destFolders.length / DEST_PARALLEL_BATCH);
+
+        const batchStartTime = Date.now();
+        console.log(`\n📦 Batch ${batchNum}/${totalBatches}: Processing ${destBatch.length} destinations...`);
+
         // Process multiple destinations simultaneously
-        await Promise.all(
+        const destResults = await Promise.allSettled(
           destBatch.map(async (destFolder) => {
             const destPath = path.join(destinationsDir, destFolder);
             const hotelFiles = fs.readdirSync(destPath).filter(f => {
               return fs.lstatSync(path.join(destPath, f)).isFile();
             });
 
+            let destProcessed = 0;
+            let destFailed = 0;
+
             // Process all files in this destination in parallel batches
             for (let i = 0; i < hotelFiles.length; i += FILE_PARALLEL_BATCH) {
               const fileBatch = hotelFiles.slice(i, i + FILE_PARALLEL_BATCH);
-              
-              // Use Promise.all for maximum speed (no error handling overhead)
-              await Promise.all(
+
+              // Use Promise.allSettled for tracking successes and failures
+              const fileResults = await Promise.allSettled(
                 fileBatch.map(async (hotelFile) => {
                   const filePath = path.join(destPath, hotelFile);
                   const hotelId = this.extractHotelIdFromFilename(hotelFile);
-                  
-                  if (!hotelId) return;
-                  
-                  try {
-                    await this.processHotelDetailFile(filePath, hotelId);
-                  } catch (e) {
-                    // Silent fail for speed
+
+                  if (!hotelId) {
+                    throw new Error('Invalid hotel ID');
                   }
+
+                  await this.processHotelDetailFile(filePath, hotelId);
+                  return { hotelId, hotelFile, filePath };
                 })
               );
+
+              // Count successes and failures
+              fileResults.forEach((result, idx) => {
+                if (result.status === 'fulfilled') {
+                  destProcessed++;
+                } else {
+                  destFailed++;
+                  // Log failed file details (only to logger, not console for speed)
+                  const failedFile = fileBatch[idx];
+                  const failedPath = path.join(destPath, failedFile);
+                  const errorMsg = result.reason?.message || 'Unknown error';
+
+                  // Only log to file, not console (for speed)
+                  Logger.warn(`[IMPORT] File processing failed`, {
+                    file: failedFile,
+                    path: failedPath,
+                    destination: destFolder,
+                    error: errorMsg
+                  });
+
+                  // Track failed files for summary (limit to first 100 for memory)
+                  if (failedFilesList.length < 100) {
+                    failedFilesList.push({
+                      file: failedFile,
+                      path: failedPath,
+                      error: errorMsg
+                    });
+                  }
+                }
+              });
+
+              // Real-time progress update (throttled)
+              const now = Date.now();
+              if (now - lastProgressUpdate > progressInterval) {
+                const currentProcessed = processedFiles + destProcessed;
+                const progress = ((currentProcessed / totalFiles) * 100).toFixed(1);
+                const elapsed = (now - importStartTime) / 1000;
+                const rate = currentProcessed / elapsed;
+                const remaining = (totalFiles - currentProcessed) / rate;
+
+                console.log(`   📈 Progress: ${currentProcessed.toLocaleString()}/${totalFiles.toLocaleString()} (${progress}%) | Rate: ${rate.toFixed(0)} files/sec | ETA: ${Math.ceil(remaining / 60)}min`);
+                lastProgressUpdate = now;
+              }
             }
+
+            return {
+              destination: destFolder,
+              processed: destProcessed,
+              failed: destFailed,
+              total: hotelFiles.length
+            };
           })
         );
 
+        // Aggregate batch results
+        let batchProcessed = 0;
+        let batchFailed = 0;
+
+        destResults.forEach((result, idx) => {
+          if (result.status === 'fulfilled') {
+            batchProcessed += result.value.processed;
+            batchFailed += result.value.failed;
+            // Reduced per-destination logging for speed
+          } else {
+            const destFolder = destBatch[idx];
+            console.log(`   ✗ ${destFolder}: Failed - ${result.reason?.message || 'Unknown error'}`);
+          }
+        });
+
+        processedFiles += batchProcessed;
+        failedFiles += batchFailed;
         processedDestinations += destBatch.length;
 
-        // Ultra minimal logging: Only every 100 destinations
-        if (processedDestinations % 100 === 0) {
-          Logger.info(`[IMPORT] ${processedDestinations}/${destFolders.length}`);
+        const batchDuration = ((Date.now() - batchStartTime) / 1000).toFixed(1);
+        const batchRate = (batchProcessed / parseFloat(batchDuration)).toFixed(0);
+
+        console.log(`   ✅ Batch ${batchNum} completed in ${batchDuration}s (${batchRate} files/sec)`);
+        console.log(`   📊 Batch Stats: ${batchProcessed} processed, ${batchFailed} failed`);
+
+        // Commit every 10 batches to reduce overhead
+        if (batchNum % 10 === 0) {
+          console.log(`   💾 Committing transaction (Batch ${batchNum})...`);
+          await pool.query('COMMIT');
+          await pool.query('SET AUTOCOMMIT = 0');
+          console.log(`   ✅ Committed`);
+        }
+
+        // Overall progress summary every 5 batches (more frequent for larger batches)
+        if (batchNum % 5 === 0) {
+          const overallProgress = ((processedFiles / totalFiles) * 100).toFixed(1);
+          const elapsedMinutes = ((Date.now() - importStartTime) / 60000).toFixed(1);
+          const currentRate = (processedFiles / ((Date.now() - importStartTime) / 1000)).toFixed(0);
+          const etaMinutes = Math.ceil(((totalFiles - processedFiles) / parseFloat(currentRate)) / 60);
+          console.log('\n' + '─'.repeat(70));
+          console.log(`📊 CHECKPOINT (Batch ${batchNum}/${totalBatches})`);
+          console.log(`   Progress: ${processedFiles.toLocaleString()}/${totalFiles.toLocaleString()} (${overallProgress}%)`);
+          console.log(`   Speed: ${currentRate} files/sec | ETA: ${etaMinutes}min | Failed: ${failedFiles.toLocaleString()}`);
+          console.log('─'.repeat(70) + '\n');
         }
       }
 
-      // ⚡ Re-enable FK checks
+      // ⚡ Re-enable FK checks and commit final batch
+      console.log('\n⚙️  Step 5: Restoring database settings...');
+      console.log('   • Committing final transactions...');
       await pool.query('COMMIT');
+      console.log('   • Re-enabling autocommit...');
       await pool.query('SET AUTOCOMMIT = 1');
+      console.log('   • Re-enabling foreign key checks...');
       await pool.query('SET FOREIGN_KEY_CHECKS = 1');
+      console.log('   • Re-enabling unique checks...');
+      await pool.query('SET UNIQUE_CHECKS = 1');
+      console.log('   • Re-enabling binary logging...');
+      try {
+        await pool.query('SET SESSION sql_log_bin = 1');
+      } catch {
+        // Ignore if not available
+      }
+      console.log('✅ Database settings restored');
 
-      const duration = ((Date.now() - startTime) / 1000).toFixed(2);
+      const duration = ((Date.now() - startTime) / 1000);
+      const minutes = Math.floor(duration / 60);
+      const seconds = Math.floor(duration % 60);
+      const avgRate = (processedFiles / duration).toFixed(1);
+
+      console.log('\n' + '='.repeat(70));
+      console.log('✨ HOTEL DETAIL FILES IMPORT COMPLETED!');
+      console.log('='.repeat(70));
+      console.log('📊 Final Statistics:');
+      console.log(`   ✅ Total files processed: ${processedFiles.toLocaleString()}/${totalFiles.toLocaleString()}`);
+      console.log(`   ❌ Failed files: ${failedFiles.toLocaleString()}`);
+      console.log(`   📂 Destinations processed: ${processedDestinations}/${destFolders.length}`);
+      console.log(`   📈 Success rate: ${((processedFiles / totalFiles) * 100).toFixed(2)}%`);
+      console.log(`   ⏱️  Total duration: ${minutes}m ${seconds}s`);
+      console.log(`   ⚡ Average speed: ${avgRate} files/second`);
+      console.log(`   💾 Data throughput: ${((processedFiles * 5) / 1024).toFixed(2)} MB (estimated)`);
+
+      // Show failed files summary if any
+      if (failedFilesList.length > 0) {
+        console.log('\n' + '─'.repeat(70));
+        console.log(`⚠️  FAILED FILES SUMMARY (showing first ${failedFilesList.length} failures):`);
+        console.log('─'.repeat(70));
+        failedFilesList.forEach((failed, idx) => {
+          console.log(`   ${idx + 1}. ${failed.file}`);
+          console.log(`      Path: ${failed.path}`);
+          console.log(`      Error: ${failed.error}`);
+        });
+        if (failedFiles > failedFilesList.length) {
+          console.log(`\n   ... and ${failedFiles - failedFilesList.length} more failed files (check logs for details)`);
+        }
+        console.log('─'.repeat(70));
+      }
+
+      console.log('='.repeat(70));
 
       Logger.info('[IMPORT] Hotel details import completed!', {
         totalDestinations: destFolders.length,
-        totalDuration: `${duration}s`
+        processedDestinations,
+        totalFiles,
+        processedFiles,
+        failedFiles,
+        failedFilesSample: failedFilesList.slice(0, 10).map(f => f.file), // First 10 failed files
+        totalDuration: `${minutes}m ${seconds}s`,
+        avgRate: `${avgRate} files/sec`
       });
 
       return {
-        files: processedDestinations,
-        duration: `${duration}s`,
-        note: 'Stats tracking disabled for maximum speed'
+        files: processedFiles,
+        failed: failedFiles,
+        destinations: processedDestinations,
+        duration: `${minutes}m ${seconds}s`,
+        avgRate: `${avgRate} files/sec`
       };
     } catch (error: any) {
+      console.error('\n' + '='.repeat(70));
+      console.error('💥 CRITICAL ERROR: HOTEL DETAILS IMPORT FAILED');
+      console.error('='.repeat(70));
+      console.error('Error:', error.message);
+      console.error('Stack:', error.stack);
+      console.error('='.repeat(70));
+
       Logger.error('[IMPORT] Hotel details import error', { error: error.message });
       throw error;
     }
@@ -1079,8 +1422,11 @@ export class HotelBedFileRepository {
     };
 
     try {
+      // Log file being processed (verbose - can be removed later)
+      // Logger.debug(`[IMPORT] Processing hotel file: ${filePath} (Hotel ID: ${hotelId})`);
+
       const content = fs.readFileSync(filePath, 'utf-8');
-      
+
       // Parse different sections
       const sections = this.parseHotelFileSections(content);
 
@@ -1125,8 +1471,15 @@ export class HotelBedFileRepository {
       stats.taxInfo = results[16];
 
       return stats;
-    } catch (error) {
-      return stats;
+    } catch (error: any) {
+      // Log which file failed for debugging (only to file, not console for speed)
+      Logger.error(`[IMPORT] Failed to process hotel file: ${filePath}`, {
+        hotelId,
+        filePath,
+        error: error.message,
+        stack: error.stack
+      });
+      throw error; // Propagate error to track failures
     }
   }
 
@@ -1135,14 +1488,14 @@ export class HotelBedFileRepository {
    */
   private parseHotelFileSections(content: string): any {
     const sections: any = {};
-    
+
     const sectionRegex = /\{([A-Z]+)\}([\s\S]*?)\{\/\1\}/g;
     let match;
 
     while ((match = sectionRegex.exec(content)) !== null) {
       const sectionName = match[1];
       const sectionContent = match[2].trim();
-      
+
       if (sectionContent) {
         sections[sectionName] = sectionContent.split('\n').filter(line => line.trim());
       }
@@ -1155,7 +1508,21 @@ export class HotelBedFileRepository {
    * Extract hotel ID from filename
    */
   private extractHotelIdFromFilename(filename: string): number | null {
-    const match = filename.match(/(\d+)_/);
+    // Filename format examples:
+    // - Simple: "123456_1_M_F" -> hotel ID is 123456
+    // - B2B with #: "ID_B2B_97#APBFA0_890932_1_M_F" -> hotel ID is 890932
+
+    // Split by underscore and find the first part that is purely numeric (5-7 digits for hotel IDs)
+    const parts = filename.split('_');
+    for (const part of parts) {
+      // Hotel IDs are typically 5-7 digit numbers
+      if (/^\d{5,7}$/.test(part)) {
+        return parseInt(part);
+      }
+    }
+
+    // Fallback: try to extract any sequence of 5-7 digits
+    const match = filename.match(/(\d{5,7})/);
     return match ? parseInt(match[1]) : null;
   }
 
@@ -1164,7 +1531,7 @@ export class HotelBedFileRepository {
    */
   private async importContracts(hotelId: number, lines: string[]): Promise<number> {
     if (!lines || lines.length === 0) return 0;
-    
+
     try {
       const MICRO_BATCH = 10000; // 🔥🔥🔥 ULTRA MODE: 10K RECORDS PER QUERY!
       let imported = 0;
@@ -1210,7 +1577,7 @@ export class HotelBedFileRepository {
    */
   private async importRoomAllocations(hotelId: number, lines: string[]): Promise<number> {
     if (!lines || lines.length === 0) return 0;
-    
+
     try {
       const MICRO_BATCH = 10000; // 🔥🔥🔥 ULTRA MODE: 10K RECORDS PER QUERY!
       let imported = 0;
@@ -1243,7 +1610,7 @@ export class HotelBedFileRepository {
    */
   private async importInventory(hotelId: number, lines: string[]): Promise<number> {
     if (!lines || lines.length === 0) return 0;
-    
+
     try {
       const MICRO_BATCH = 10000; // 🔥🔥🔥 ULTRA MODE: 10K RECORDS PER QUERY!
       let imported = 0;
@@ -1276,7 +1643,7 @@ export class HotelBedFileRepository {
    */
   private async importRates(hotelId: number, lines: string[]): Promise<number> {
     if (!lines || lines.length === 0) return 0;
-    
+
     try {
       const MICRO_BATCH = 10000; // 🔥🔥🔥 ULTRA MODE: 10K RECORDS PER QUERY! (rates have most data)
       let imported = 0;
@@ -1291,10 +1658,10 @@ export class HotelBedFileRepository {
             // 🔥 FIX: Rates data is at parts[6], not parts[7]!
             // Format: date_from:date_to:room_code:board_code:::rate_tuples
             const ratesString = parts[6] || ''; // Rates are at position 6
-            
+
             // Extract all rate tuples
             const rateMatches = ratesString.matchAll(/\(([^,]+),([^,]+),([^,]+),([^,]+),([^,]+),([^)]+)\)/g);
-            
+
             for (const rateMatch of rateMatches) {
               values.push([
                 hotelId,
@@ -1331,7 +1698,7 @@ export class HotelBedFileRepository {
   private async importSupplements(hotelId: number, lines: string[]): Promise<number> {
     try {
       const values: any[] = [];
-      
+
       for (const line of lines) {
         const parts = line.split(':');
         if (parts.length >= 6) {
@@ -1368,7 +1735,7 @@ export class HotelBedFileRepository {
   private async importOccupancyRules(hotelId: number, lines: string[]): Promise<number> {
     try {
       const values: any[] = [];
-      
+
       for (const line of lines) {
         const parts = line.split(':');
         if (parts.length >= 3) {
@@ -1402,7 +1769,7 @@ export class HotelBedFileRepository {
   private async importEmailSettings(hotelId: number, lines: string[]): Promise<number> {
     try {
       const values: any[] = [];
-      
+
       for (const line of lines) {
         const parts = line.split(':');
         if (parts.length >= 7) {
@@ -1840,22 +2207,22 @@ export class HotelBedFileRepository {
   private buildHotelFiltersWhereClause(filters?: any): { whereClause: string; params: any[] } {
     let whereClause = '';
     const params: any[] = [];
-    
+
     if (filters?.destination_code) {
       whereClause = 'WHERE destination_code = ?';
       params.push(filters.destination_code);
     }
-    
+
     if (filters?.category) {
       whereClause += whereClause ? ' AND category = ?' : 'WHERE category = ?';
       params.push(filters.category);
     }
-    
+
     if (filters?.chain_code) {
       whereClause += whereClause ? ' AND chain_code = ?' : 'WHERE chain_code = ?';
       params.push(filters.chain_code);
     }
-    
+
     if (filters?.country_code) {
       whereClause += whereClause ? ' AND country_code = ?' : 'WHERE country_code = ?';
       params.push(filters.country_code);
@@ -1887,7 +2254,7 @@ export class HotelBedFileRepository {
       if (page !== undefined && limit !== undefined) {
         // PAGINATED RESPONSE
         const offset = (page - 1) * limit;
-        
+
         const dataQuery = `
           SELECT 
             id, category, destination_code, chain_code, accommodation_type, 
@@ -1950,7 +2317,7 @@ export class HotelBedFileRepository {
         WHERE id = ?
       `;
       const [rows]: any = await pool.query(query, [hotelId]);
-      
+
       if (rows.length === 0) {
         return null;
       }
@@ -1970,7 +2337,7 @@ export class HotelBedFileRepository {
       // Step 1: Get hotel basic info
       const hotelQuery = `SELECT id, category, destination_code, chain_code, accommodation_type, ranking, group_hotel, country_code, state_code, longitude, latitude, name FROM hotels WHERE id = ?`;
       const [hotelRows]: any = await pool.query(hotelQuery, [hotelId]);
-      
+
       if (hotelRows.length === 0) {
         return null;
       }
@@ -2174,12 +2541,12 @@ export class HotelBedFileRepository {
    */
   async computeCheapestPrices(category: string = 'ALL', hotelId?: number): Promise<any> {
     const start = Date.now();
-    
+
     Logger.info('⚡ START');
     await this.createCheapestPPTable();
 
     const cats = category === 'ALL' ? ['CITY_TRIP', 'OTHER'] : [category];
-    
+
     try {
       // Clean old data first
       Logger.info('🗑️  Cleaning old prices...');
@@ -2190,18 +2557,18 @@ export class HotelBedFileRepository {
         await pool.query('TRUNCATE TABLE cheapest_pp');
         Logger.info('   ✅ All old prices cleaned');
       }
-      
+
       // BYPASS LOCKS + FK checks
       await pool.query('SET SESSION TRANSACTION ISOLATION LEVEL READ UNCOMMITTED');
       await pool.query('SET FOREIGN_KEY_CHECKS = 0');
-      
+
       Logger.info('Computing...');
       let total = 0;
-      
+
       for (const cat of cats) {
         const n = cat === 'CITY_TRIP' ? 2 : 5;
         Logger.info(`${cat}...`);
-        
+
         // Only select hotels that exist in hotels table (FK safe!)
         const [res]: any = await pool.query(`
           INSERT INTO cheapest_pp 
@@ -2218,7 +2585,7 @@ export class HotelBedFileRepository {
             total_price = VALUES(total_price), 
             derived_at = NOW()
         `);
-        
+
         total += res.affectedRows || 0;
         Logger.info(`✅ ${cat}: ${res.affectedRows}`);
       }
@@ -2232,8 +2599,8 @@ export class HotelBedFileRepository {
 
       return { success: true, computed: total, duration: `${dur}s` };
     } catch (error: any) {
-      await pool.query('SET SESSION TRANSACTION ISOLATION LEVEL REPEATABLE READ').catch(() => {});
-      await pool.query('SET FOREIGN_KEY_CHECKS = 1').catch(() => {});
+      await pool.query('SET SESSION TRANSACTION ISOLATION LEVEL REPEATABLE READ').catch(() => { });
+      await pool.query('SET FOREIGN_KEY_CHECKS = 1').catch(() => { });
       Logger.error('❌ Failed:', error);
       throw error;
     }
@@ -2246,7 +2613,7 @@ export class HotelBedFileRepository {
   async getAvailableRooms(hotelId: number, checkIn?: string, nights?: number, page: number = 1, limit: number = 10, maxDates: number = 10): Promise<any> {
     try {
       Logger.info('[REPO] Getting available rooms:', { hotelId, checkIn, nights, page, limit, maxDates });
-      
+
       // Build date filter with SQL date functions
       let dateFilter = '';
       const params: any[] = [hotelId];
@@ -2281,9 +2648,9 @@ export class HotelBedFileRepository {
         ORDER BY r.room_code
         LIMIT ? OFFSET ?
       `;
-      
+
       const [roomCodeResults]: any = await pool.query(roomCodesQuery, [...params, limit, offset]);
-      
+
       if (roomCodeResults.length === 0) {
         Logger.info('[REPO] No rooms found for pagination', { page, limit });
         return {
@@ -2299,9 +2666,9 @@ export class HotelBedFileRepository {
           }
         };
       }
-      
+
       const roomCodes = roomCodeResults.map((r: any) => r.room_code);
-      
+
       // Now get all data for these room codes
       const query = `
         SELECT 
@@ -2326,8 +2693,8 @@ export class HotelBedFileRepository {
 
       const queryParams = [...params, ...roomCodes];
       const [rooms]: any = await pool.query(query, queryParams);
-      
-      Logger.info('[REPO] Rooms data fetched:', { 
+
+      Logger.info('[REPO] Rooms data fetched:', {
         totalRecords: rooms.length,
         totalUniqueRooms: total,
         page,
@@ -2336,7 +2703,7 @@ export class HotelBedFileRepository {
 
       // Group by room_code and date (to avoid duplicates)
       const roomsMap = new Map();
-      
+
       for (const room of rooms) {
         if (!roomsMap.has(room.room_code)) {
           roomsMap.set(room.room_code, {
@@ -2350,11 +2717,11 @@ export class HotelBedFileRepository {
             priceRange: { min: parseFloat(room.price), max: parseFloat(room.price) }
           });
         }
-        
+
         const roomData = roomsMap.get(room.room_code);
         const price = parseFloat(room.price);
         const dateKey = room.date_from;
-        
+
         // Group by date - keep the cheapest price for each date
         if (!roomData.datesMap.has(dateKey)) {
           roomData.datesMap.set(dateKey, {
@@ -2374,7 +2741,7 @@ export class HotelBedFileRepository {
           }
           existing.variants++; // Increment variant count
         }
-        
+
         // Update price range
         if (price < roomData.priceRange.min) roomData.priceRange.min = price;
         if (price > roomData.priceRange.max) roomData.priceRange.max = price;
@@ -2383,13 +2750,13 @@ export class HotelBedFileRepository {
       // Limit dates per room and add summary
       const roomsArray = Array.from(roomsMap.values()).map(room => {
         // Convert datesMap to sorted array
-        const allDates = Array.from(room.datesMap.values()).sort((a:any, b:any) => 
+        const allDates = Array.from(room.datesMap.values()).sort((a: any, b: any) =>
           new Date(a.date).getTime() - new Date(b.date).getTime()
         );
-        
+
         const totalDatesCount = allDates.length;
         const limitedDates = allDates.slice(0, maxDates);
-        
+
         return {
           roomCode: room.roomCode,
           boardCode: room.boardCode,
@@ -2403,15 +2770,15 @@ export class HotelBedFileRepository {
           priceRange: room.priceRange
         };
       });
-      
-      Logger.info('[REPO] Available rooms result:', { 
+
+      Logger.info('[REPO] Available rooms result:', {
         roomsInPage: roomsArray.length,
         totalRooms: total,
         page,
         totalPages,
         maxDatesPerRoom: maxDates,
-        rooms: roomsArray.map(r => ({ 
-          room: r.roomCode, 
+        rooms: roomsArray.map(r => ({
+          room: r.roomCode,
           totalDates: r.totalAvailableDates,
           showing: r.showingDates
         }))
@@ -2447,7 +2814,7 @@ export class HotelBedFileRepository {
 
       // Get all rates in date range (will filter by exact dates later)
       const roomFilter = roomCodeFilter ? `AND room_code = '${roomCodeFilter}'` : '';
-      
+
       // Fetch rates using raw SQL date comparison
       const [rates]: any = await pool.query(`
         SELECT 
@@ -2464,8 +2831,8 @@ export class HotelBedFileRepository {
           ${roomFilter}
         ORDER BY room_code, date_from
       `, [hotelId, checkIn, checkIn, nights]);
-      
-      Logger.info('[REPO] Rates fetched:', { 
+
+      Logger.info('[REPO] Rates fetched:', {
         count: rates.length,
         sampleDates: rates.slice(0, 5).map((r: any) => ({
           room: r.room_code,
@@ -2491,7 +2858,7 @@ export class HotelBedFileRepository {
         d.setDate(d.getDate() + i);
         expectedDates.push(d.toISOString().split('T')[0]);
       }
-      
+
       Logger.info('[REPO] Expected dates:', { dates: expectedDates });
 
       // Group by room_code and collect rates
@@ -2499,7 +2866,7 @@ export class HotelBedFileRepository {
 
       for (const rate of rates) {
         const dateStr = rate.date_from; // Already formatted as YYYY-MM-DD from SQL
-        
+
         if (!roomsMap.has(rate.room_code)) {
           roomsMap.set(rate.room_code, {
             roomCode: rate.room_code,
@@ -2509,9 +2876,9 @@ export class HotelBedFileRepository {
             datesFound: new Set()
           });
         }
-        
+
         const roomData = roomsMap.get(rate.room_code);
-        
+
         // Avoid duplicates
         if (!roomData.datesFound.has(dateStr)) {
           roomData.datesFound.add(dateStr);
@@ -2524,25 +2891,25 @@ export class HotelBedFileRepository {
           roomData.totalPrice += parseFloat(rate.price);
         }
       }
-      
+
       // Get unique dates found in rates
       const allDatesFound = new Set<string>();
       roomsMap.forEach(room => {
         room.datesFound.forEach((date: string) => allDatesFound.add(date));
       });
-      
-      Logger.info('[REPO] Rooms analysis:', { 
+
+      Logger.info('[REPO] Rooms analysis:', {
         totalRooms: roomsMap.size,
         rooms: Array.from(roomsMap.keys()),
         uniqueDatesInRates: Array.from(allDatesFound).sort(),
         expectedDates: expectedDates
       });
-      
+
       // Filter rooms that have ALL required nights
       const completeRooms = Array.from(roomsMap.values()).filter(room => {
         const hasAllNights = room.datesFound.size === nights;
         if (!hasAllNights) {
-          Logger.info('[REPO] Room incomplete:', { 
+          Logger.info('[REPO] Room incomplete:', {
             roomCode: room.roomCode,
             datesFound: Array.from(room.datesFound).sort(),
             missingDates: expectedDates.filter(d => !room.datesFound.has(d)),
@@ -2589,7 +2956,7 @@ export class HotelBedFileRepository {
         totalPrice: parseFloat(room.totalPrice.toFixed(2)),
         pricePerPerson: parseFloat((room.totalPrice / 2).toFixed(2)),
         currency: 'EUR',
-        nightlyRates: room.rates.sort((a: any, b: any) => 
+        nightlyRates: room.rates.sort((a: any, b: any) =>
           new Date(a.date).getTime() - new Date(b.date).getTime()
         ),
         capacity: allocMap.get(room.roomCode) || null
@@ -2684,7 +3051,7 @@ export class HotelBedFileRepository {
         ORDER BY ${orderBy}
         LIMIT ? OFFSET ?
       `;
-      
+
       const [rows]: any = await pool.query(dataQuery, [...params, limit, offset]);
 
       return {
@@ -2730,7 +3097,7 @@ export class HotelBedFileRepository {
           UNIQUE KEY uk_hotel_category (hotel_id, category_tag)
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
       `;
-      
+
       await pool.query(createTableQuery);
       Logger.info('[REPO] cheapest_pp table ensured');
     } catch (error: any) {
