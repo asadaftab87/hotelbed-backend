@@ -1510,20 +1510,49 @@ export class HotelBedFileRepository {
    */
   private extractHotelIdFromFilename(filename: string): number | null {
     // Filename format examples:
-    // - Simple: "123456_1_M_F" -> hotel ID is 123456
+    // - Standard format: "461_8831_O_F" -> parts: [461, 8831, O, F] -> hotel ID is 8831 (second numeric part)
+    // - Standard format: "246_8547_M_F" -> parts: [246, 8547, M, F] -> hotel ID is 8547 (second numeric part)
+    // - Standard format: "1147_1027_M_F" -> parts: [1147, 1027, M, F] -> hotel ID is 1027 (second numeric part)
     // - B2B with #: "ID_B2B_97#APBFA0_890932_1_M_F" -> hotel ID is 890932
 
-    // Split by underscore and find the first part that is purely numeric (5-7 digits for hotel IDs)
+    // Split by underscore
     const parts = filename.split('_');
-    for (const part of parts) {
-      // Hotel IDs are typically 5-7 digit numbers
-      if (/^\d{5,7}$/.test(part)) {
-        return parseInt(part);
+
+    // Standard format: {destination_code}_{hotel_id}_{type}_{flag}
+    // The hotel ID is typically the second numeric part
+    if (parts.length >= 4) {
+      // Check if second part is numeric (this should be the hotel ID)
+      const secondPart = parts[1];
+      if (/^\d+$/.test(secondPart)) {
+        const hotelId = parseInt(secondPart);
+        if (hotelId > 0) {
+          return hotelId;
+        }
       }
     }
 
-    // Fallback: try to extract any sequence of 5-7 digits
-    const match = filename.match(/(\d{5,7})/);
+    // Fallback 1: Find all numeric parts and use the second one if available
+    const numericParts = parts.filter(part => /^\d+$/.test(part));
+    if (numericParts.length >= 2) {
+      const hotelId = parseInt(numericParts[1]);
+      if (hotelId > 0) {
+        return hotelId;
+      }
+    }
+
+    // Fallback 2: Find the largest numeric part (likely to be hotel ID)
+    if (numericParts.length > 0) {
+      const largestNumeric = numericParts
+        .map(p => parseInt(p))
+        .filter(n => n > 0)
+        .sort((a, b) => b - a)[0];
+      if (largestNumeric) {
+        return largestNumeric;
+      }
+    }
+
+    // Last resort: try to extract any sequence of digits
+    const match = filename.match(/(\d+)/);
     return match ? parseInt(match[1]) : null;
   }
 
