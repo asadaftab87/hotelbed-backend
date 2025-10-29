@@ -1160,8 +1160,8 @@ export class HotelBedFileRepository {
       console.log('✅ Performance optimizations applied');
 
       // 🔥🔥🔥 ULTRA SPEED MODE: Maximized parallelism!
-      const FILE_PARALLEL_BATCH = 2000; // Process 5000 files at once! 🚀
-      const DEST_PARALLEL_BATCH = 200; // Process 250 destinations at once! 🚀
+      const FILE_PARALLEL_BATCH = 200; // Process 200 files at once! 🚀
+      const DEST_PARALLEL_BATCH = 2000; // Process 2000 destinations at once! 🚀
 
       console.log('\n🚀 Step 4: Starting parallel import process...');
       console.log(`   Configuration:`);
