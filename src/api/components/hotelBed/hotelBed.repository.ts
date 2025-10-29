@@ -1159,10 +1159,26 @@ export class HotelBedFileRepository {
       }
       console.log('✅ Performance optimizations applied');
 
-      // 🔥🔥🔥 ULTRA SPEED MODE: Maximized parallelism!
+      // 🔥🔥🔥 OPTIMIZED BATCH CONFIGURATION for better progress tracking
       const FILE_PARALLEL_BATCH = 200; // Process 200 files at once! 🚀
-      const DEST_PARALLEL_BATCH = 2000; // Process 2000 destinations at once! 🚀
 
+      // Calculate DEST_PARALLEL_BATCH to create ~200 batches for progress visibility
+      const TARGET_BATCHES = 200;
+      const MIN_DEST_PER_BATCH = 2;    // Minimum to avoid too much overhead
+      const MAX_DEST_PER_BATCH = 50;   // Maximum for reasonable batch sizes
+
+      let DEST_PARALLEL_BATCH = Math.max(
+        MIN_DEST_PER_BATCH,
+        Math.min(
+          MAX_DEST_PER_BATCH,
+          Math.ceil(destFolders.length / TARGET_BATCHES)
+        )
+      );
+
+      // If we have very few destinations, just process 1 at a time for more batches
+      if (destFolders.length < TARGET_BATCHES && destFolders.length > 0) {
+        DEST_PARALLEL_BATCH = 1;
+      }
 
       console.log('\n🚀 Step 4: Starting parallel import process...');
       console.log(`   Configuration:`);
@@ -1292,16 +1308,16 @@ export class HotelBedFileRepository {
         console.log(`   ✅ Batch ${batchNum} completed in ${batchDuration}s (${batchRate} files/sec)`);
         console.log(`   📊 Batch Stats: ${batchProcessed} processed, ${batchFailed} failed`);
 
-        // Commit every 10 batches to reduce overhead
-        if (batchNum % 10 === 0) {
+        // Commit every 20 batches to reduce overhead with many batches
+        if (batchNum % 20 === 0) {
           console.log(`   💾 Committing transaction (Batch ${batchNum})...`);
           await pool.query('COMMIT');
           await pool.query('SET AUTOCOMMIT = 0');
           console.log(`   ✅ Committed`);
         }
 
-        // Overall progress summary every 5 batches (more frequent for larger batches)
-        if (batchNum % 5 === 0) {
+        // Overall progress summary every 10 batches for better visibility
+        if (batchNum % 10 === 0) {
           const overallProgress = ((processedFiles / totalFiles) * 100).toFixed(1);
           const elapsedMinutes = ((Date.now() - importStartTime) / 60000).toFixed(1);
           const currentRate = (processedFiles / ((Date.now() - importStartTime) / 1000)).toFixed(0);
