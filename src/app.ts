@@ -67,6 +67,15 @@ import { redisManager } from '@config/redis.config';
     });
 
     const app: express.Application = new Server().app
+
+    // Simple home page (stops the noisy 404s on GET /)
+    app.get('/', (_req, res) => res.status(200).send('OK'));
+
+    // Health check endpoint (point ALB/monitor here)
+    app.get('/healthz', (_req, res) => res.status(200).json({ ok: true }));
+
+    // Quiet the favicon requests (no body, 204)
+    app.get('/favicon.ico', (_req, res) => res.status(204).end());
     const server: HttpServer = createServer(app)
 
     server.listen(port)
@@ -81,28 +90,28 @@ import { redisManager } from '@config/redis.config';
     // Graceful shutdown
     // const shutdown = async () => {
     //   Logger.info('🛑 Shutting down gracefully...');
-      
+
     //   // try {
     //   //   // Stop cron jobs
     //   //   cronScheduler.stopAll();
     //   // } catch (err) {
     //   //   Logger.debug('Error stopping cron:', err);
     //   // }
-      
+
     //   // try {
     //   //   // Close queue connections
     //   //   await queueManager.close();
     //   // } catch (err) {
     //   //   Logger.debug('Error closing queue:', err);
     //   // }
-      
+
     //   try {
     //     // Close Redis
     //     await redisManager.disconnect();
     //   } catch (err) {
     //     Logger.debug('Error disconnecting Redis:', err);
     //   }
-      
+
     //   try {
     //     // Close database pool
     //     const pool = require('./database').default;
@@ -111,7 +120,7 @@ import { redisManager } from '@config/redis.config';
     //   } catch (err) {
     //     Logger.debug('Error closing database pool:', err);
     //   }
-      
+
     //   server.close(() => {
     //     Logger.info('✅ Server closed');
     //     process.exit(0);

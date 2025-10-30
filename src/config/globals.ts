@@ -10,7 +10,7 @@ export const env = {
   API_PREFIX: process.env.API_PREFIX || '/api',
   DOMAIN: process.env.DOMAIN || 'localhost',
   LOG_DIRECTORY: process.env.LOG_DIRECTORY || 'logs',
-  
+
   // Database
   DB_URI: process.env.DB_URI || '',
   DATABASE_URL: process.env.DATABASE_URL || '',
@@ -20,7 +20,7 @@ export const env = {
   DB_PASSWORD: process.env.DB_PASSWORD || '',
   DB_NAME: process.env.DB_NAME || 'hotelbed',
   DB_CONNECTION_LIMIT: parseInt(process.env.DB_CONNECTION_LIMIT || '10'),
-  
+
   // Redis
   ENABLE_REDIS: process.env.ENABLE_REDIS === 'true',
   REDIS_HOST: process.env.REDIS_HOST || 'localhost',
@@ -28,25 +28,27 @@ export const env = {
   REDIS_PASSWORD: process.env.REDIS_PASSWORD || '',
   REDIS_DB: parseInt(process.env.REDIS_DB || '0'),
   ENABLE_PROMETHEUS: process.env.ENABLE_PROMETHEUS === 'true',
-  
+
   // Redis TTL Settings
   REDIS_TTL_SEARCH: parseInt(process.env.REDIS_TTL_SEARCH || '1800'),
   REDIS_TTL_MATRIX: parseInt(process.env.REDIS_TTL_MATRIX || '900'),
   REDIS_TTL_STATIC: parseInt(process.env.REDIS_TTL_STATIC || '86400'),
   REDIS_TTL_CHEAPEST: parseInt(process.env.REDIS_TTL_CHEAPEST || '3600'),
   REDIS_KEY_VERSION: process.env.REDIS_KEY_VERSION || 'v1',
-  
+
   // Queue & Cron
   ENABLE_QUEUE: process.env.ENABLE_QUEUE === 'true',
   ENABLE_CRON: process.env.ENABLE_CRON === 'true',
   SYNC_INTERVAL_MIN: parseInt(process.env.SYNC_INTERVAL_MIN || '60'),
-  
+
   // HotelBeds API
   HOTELBEDS_API_KEY: process.env.HOTELBEDS_API_KEY || '',
   HOTELBEDS_BASE_URL: process.env.HOTELBEDS_BASE_URL || 'https://aif2.hotelbeds.com/aif2-pub-ws/files',
   HOTELBEDS_CACHE_ENDPOINT: process.env.HOTELBEDS_CACHE_ENDPOINT || '/cache/HotelbedsStaticData.zip',
   HOTELBEDS_CACHE_TYPE: process.env.HOTELBEDS_CACHE_TYPE || 'static_data',
-  
+  HOTELBEDS_UPDATE_ENDPOINT: process.env.HOTELBEDS_UPDATE_ENDPOINT || '/update/HotelbedsUpdateData.zip',
+  HOTELBEDS_UPDATE_TYPE: process.env.HOTELBEDS_UPDATE_TYPE || 'update_data',
+
   // Precompute Settings
   PRECOMPUTE_INTERVAL_MIN: parseInt(process.env.PRECOMPUTE_INTERVAL_MIN || '60'),
   PRECOMPUTE_HORIZON_DAYS: parseInt(process.env.PRECOMPUTE_HORIZON_DAYS || '365'),
