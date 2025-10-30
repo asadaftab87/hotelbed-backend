@@ -479,10 +479,53 @@ export class HotelBedFileRepository {
 
   private async cleanDatabase(): Promise<void> {
     try {
+      console.log('='.repeat(60));
+      console.log('🧹 STARTING DATABASE CLEANUP');
+      console.log('='.repeat(60));
       Logger.info('[CLEAN] Starting complete database cleanup');
 
+      const startTime = Date.now();
+
+      // First, check table sizes for estimation
+      console.log('📊 Step 1: Analyzing database size...');
+      try {
+        const [sizeInfo] = await pool.query(`
+          SELECT 
+            table_name,
+            table_rows,
+            ROUND(((data_length + index_length) / 1024 / 1024), 2) AS size_mb
+          FROM information_schema.TABLES 
+          WHERE table_schema = DATABASE()
+          ORDER BY (data_length + index_length) DESC
+        `) as any;
+
+        const totalRows = sizeInfo.reduce((sum: number, t: any) => sum + (t.table_rows || 0), 0);
+        const totalSize = sizeInfo.reduce((sum: number, t: any) => sum + (t.size_mb || 0), 0);
+
+        console.log(`   📈 Total estimated rows: ${totalRows.toLocaleString()}`);
+        console.log(`   💾 Total database size: ${totalSize.toFixed(2)} MB`);
+        console.log(`   ⏱️  Estimated cleanup time: ${Math.ceil(totalRows / 1000)} seconds`);
+
+        // Show largest tables
+        console.log('\n   📊 Largest tables:');
+        sizeInfo.slice(0, 5).forEach((t: any) => {
+          console.log(`      • ${t.table_name}: ${(t.table_rows || 0).toLocaleString()} rows (${t.size_mb} MB)`);
+        });
+      } catch (err) {
+        console.log('   ⚠️  Could not analyze size, continuing...');
+      }
+
       // Disable foreign key checks temporarily
+      console.log('\n⚙️  Step 2: Disabling foreign key checks...');
       await pool.query('SET FOREIGN_KEY_CHECKS = 0');
+      console.log('✅ Foreign key checks disabled');
+
+      // Additional optimizations for large datasets
+      console.log('\n⚙️  Step 3: Applying performance optimizations...');
+      await pool.query('SET SESSION sql_log_bin = 0'); // Disable binary logging if allowed
+      await pool.query('SET SESSION unique_checks = 0'); // Disable unique checks
+      await pool.query('SET SESSION autocommit = 1'); // Ensure autocommit is on
+      console.log('✅ Performance optimizations applied');
 
       // Truncate all tables in reverse order (to handle foreign keys)
       const tables = [
@@ -515,29 +558,122 @@ export class HotelBedFileRepository {
         'processing_queue'
       ];
 
+      console.log(`\n📋 Step 4: Preparing to truncate ${tables.length} tables...`);
+
+      // Execute truncates in parallel batches for maximum speed
+      console.log('\n🚀 Step 5: Executing parallel truncate operations...');
+      console.log('Progress:\n');
+      console.time('⏱️  Total truncate duration');
+
       let cleaned = 0;
-      for (const table of tables) {
-        try {
-          await pool.query(`TRUNCATE TABLE ${table}`);
-          cleaned++;
-          Logger.info('[CLEAN] Table cleaned', { table });
-        } catch (error: any) {
-          // Table might not exist, continue
-          Logger.warn('[CLEAN] Failed to clean table', {
-            table,
-            error: error.message
-          });
+      let failed = 0;
+      const batchSize = 10; // Increased batch size for faster processing
+      const failedTables: string[] = [];
+
+      for (let i = 0; i < tables.length; i += batchSize) {
+        const batch = tables.slice(i, i + batchSize);
+        const batchNum = Math.floor(i / batchSize) + 1;
+        const totalBatches = Math.ceil(tables.length / batchSize);
+
+        const batchStartTime = Date.now();
+        console.log(`📦 Batch ${batchNum}/${totalBatches}: Processing ${batch.length} tables...`);
+
+        const batchResults = await Promise.allSettled(
+          batch.map(async (table) => {
+            const tableStartTime = Date.now();
+            try {
+              // Try TRUNCATE first (faster)
+              await pool.query(`TRUNCATE TABLE \`${table}\``);
+              const tableDuration = Date.now() - tableStartTime;
+              cleaned++;
+              const progress = ((cleaned / tables.length) * 100).toFixed(1);
+              console.log(`   ✓ [${cleaned}/${tables.length}] ${progress}% - ${table} (${tableDuration}ms)`);
+              Logger.info('[CLEAN] Table cleaned', { table, durationMs: tableDuration });
+              return { table, success: true, duration: tableDuration };
+            } catch (err: any) {
+              // If TRUNCATE fails, try DELETE (slower but more reliable)
+              try {
+                console.log(`   ⚠️  TRUNCATE failed for ${table}, trying DELETE...`);
+                await pool.query(`DELETE FROM \`${table}\``);
+                const tableDuration = Date.now() - tableStartTime;
+                cleaned++;
+                const progress = ((cleaned / tables.length) * 100).toFixed(1);
+                console.log(`   ✓ [${cleaned}/${tables.length}] ${progress}% - ${table} (${tableDuration}ms, DELETE)`);
+                return { table, success: true, duration: tableDuration, method: 'DELETE' };
+              } catch (deleteErr: any) {
+                failed++;
+                failedTables.push(table);
+                console.log(`   ✗ Failed - ${table}: ${deleteErr.message}`);
+                Logger.warn('[CLEAN] Failed to clean table', { table, error: deleteErr.message });
+                return { table, success: false, error: deleteErr.message };
+              }
+            }
+          })
+        );
+
+        const batchDuration = Date.now() - batchStartTime;
+        const batchSucceeded = batchResults.filter(r => r.status === 'fulfilled').length;
+
+        if (batchSucceeded === batch.length) {
+          console.log(`   ✅ Batch ${batchNum} completed in ${(batchDuration / 1000).toFixed(2)}s\n`);
+        } else {
+          console.log(`   ⚠️  Batch ${batchNum}: ${batchSucceeded}/${batch.length} succeeded (${(batchDuration / 1000).toFixed(2)}s)\n`);
         }
       }
 
-      // Re-enable foreign key checks
+      console.timeEnd('⏱️  Total truncate duration');
+      console.log('✅ All tables processed');
+
+      // Re-enable settings
+      console.log('\n⚙️  Step 6: Restoring database settings...');
       await pool.query('SET FOREIGN_KEY_CHECKS = 1');
+      await pool.query('SET SESSION unique_checks = 1');
+      await pool.query('SET SESSION sql_log_bin = 1');
+      console.log('✅ Database settings restored');
+
+      const duration = Date.now() - startTime;
+
+      console.log('\n' + '='.repeat(60));
+      if (failed === 0) {
+        console.log('✨ DATABASE CLEANUP COMPLETED SUCCESSFULLY');
+      } else {
+        console.log('⚠️  DATABASE CLEANUP COMPLETED WITH WARNINGS');
+      }
+      console.log('='.repeat(60));
+      console.log(`📊 Statistics:`);
+      console.log(`   - Tables cleaned: ${cleaned}/${tables.length}`);
+      console.log(`   - Failed: ${failed}`);
+      console.log(`   - Success rate: ${((cleaned / tables.length) * 100).toFixed(1)}%`);
+      console.log(`   - Total duration: ${(duration / 1000).toFixed(2)} seconds (${Math.floor(duration / 60000)}m ${Math.floor((duration % 60000) / 1000)}s)`);
+      console.log(`   - Average per table: ${(duration / tables.length).toFixed(0)} ms`);
+
+      if (failed > 0) {
+        console.log(`\n   ❌ Failed tables:`);
+        failedTables.forEach(table => console.log(`      • ${table}`));
+      }
+      console.log('='.repeat(60));
 
       Logger.info('[CLEAN] Database cleanup completed', {
         tablesCleaned: cleaned,
-        totalTables: tables.length
+        totalTables: tables.length,
+        failed,
+        successRate: ((cleaned / tables.length) * 100).toFixed(1),
+        durationMs: duration,
+        durationSec: (duration / 1000).toFixed(2)
       });
+
+      if (failed > 0) {
+        console.warn(`\n⚠️  Warning: ${failed} table(s) failed to clean. Review the logs above.`);
+      }
+
     } catch (error: any) {
+      console.error('\n' + '='.repeat(60));
+      console.error('💥 CRITICAL ERROR: DATABASE CLEANUP FAILED');
+      console.error('='.repeat(60));
+      console.error('Error message:', error.message);
+      console.error('Stack trace:', error.stack);
+      console.error('='.repeat(60));
+
       Logger.error('[CLEAN] Database cleanup failed', {
         error: error.message,
         stack: error.stack
