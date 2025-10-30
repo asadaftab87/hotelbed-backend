@@ -35,6 +35,28 @@ export class HotelBedFileController {
 
   /**
    * @swagger
+   * /hotelbed/update:
+   *   get:
+   *     summary: Download, extract, and import HotelBeds update data
+   *     description: Complete workflow - Downloads HotelBeds update data, extracts files, and imports incremental updates to MySQL database
+   *     tags: [HotelBed]
+   *     responses:
+   *       200:
+   *         description: Update process finished successfully
+   */
+  updateData = asyncHandler(
+    async (req: Request, res: Response, next: NextFunction): Promise<Response | void> => {
+      const result = await this.service.downloadUpdate();
+
+      new SuccessResponse(
+        'HotelBeds update data processed and imported to database successfully',
+        result
+      ).send(res);
+    }
+  );
+
+  /**
+   * @swagger
    * /hotelbed/import-only:
    *   get:
    *     summary: Import from existing extracted folder (Development only)
@@ -58,7 +80,7 @@ export class HotelBedFileController {
       new SuccessResponse(
         'Data imported successfully from existing folder',
         result
-      ).send(res      );
+      ).send(res);
     }
   );
 
@@ -108,12 +130,12 @@ export class HotelBedFileController {
     async (req: Request, res: Response, next: NextFunction): Promise<Response | void> => {
       const page = req.query.page ? parseInt(req.query.page as string) : undefined;
       const limit = req.query.limit ? parseInt(req.query.limit as string) : undefined;
-      
+
       // Validate pagination parameters if provided
       if (page !== undefined && page < 1) {
         throw new BadRequestError('Page must be greater than 0');
       }
-      
+
       if (limit !== undefined && (limit < 1 || limit > 10000)) {
         throw new BadRequestError('Limit must be between 1 and 10000');
       }
@@ -176,7 +198,7 @@ export class HotelBedFileController {
   getHotelById = asyncHandler(
     async (req: Request, res: Response, next: NextFunction): Promise<Response | void> => {
       const hotelId = parseInt(req.params.hotelId);
-      
+
       if (isNaN(hotelId)) {
         throw new BadRequestError('Invalid hotel ID');
       }
@@ -226,7 +248,7 @@ export class HotelBedFileController {
       const hotelId = parseInt(req.params.hotelId);
       const page = parseInt(req.query.page as string) || 1;
       const limit = parseInt(req.query.limit as string) || 20;
-      
+
       if (isNaN(hotelId)) {
         throw new BadRequestError('Invalid hotel ID');
       }

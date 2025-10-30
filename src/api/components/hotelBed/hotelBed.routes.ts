@@ -22,6 +22,16 @@ export class HotelBedRoutes {
     );
 
     /**
+     * Update process: Download Update + Extract + Import (Incremental Update)
+     * GET /hotelbed/update
+     * No cache - processing endpoint
+     */
+    this.router.get(
+      '/update',
+      this.controller.updateData
+    );
+
+    /**
      * Direct import from existing extracted folder (Development only)
      * GET /hotelbed/import-only
      * Query: ?folder=folder_name (optional)

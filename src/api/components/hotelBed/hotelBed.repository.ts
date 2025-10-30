@@ -211,6 +211,137 @@ export class HotelBedFileRepository {
     }
   }
 
+  /**
+   * Download HotelBed update file with streaming support
+   * @returns Download result with file details
+   */
+  async downloadUpdateZip(): Promise<any> {
+    const startTime = Date.now();
+    this.processingStatus.currentAction = 'downloading_update';
+    this.processingStatus.progress = 0;
+
+    try {
+      // Initialize download directory
+      if (!fs.existsSync(this.downloadsDir)) {
+        fs.mkdirSync(this.downloadsDir, { recursive: true });
+        Logger.info('[DOWNLOAD-UPDATE] Created downloads directory', { path: this.downloadsDir });
+      }
+
+      // Prepare download configuration
+      const url = `${env.HOTELBEDS_BASE_URL}${env.HOTELBEDS_UPDATE_ENDPOINT}`;
+      const updateType = env.HOTELBEDS_UPDATE_TYPE;
+      const fileName = `hotelbed_update_${updateType}_${Date.now()}.zip`;
+      const filePath = path.join(this.downloadsDir, fileName);
+
+      Logger.info('[DOWNLOAD-UPDATE] Starting HotelBeds update download', {
+        url,
+        updateType,
+        fileName
+      });
+
+      // Initiate streaming download
+      const response = await axios({
+        method: 'GET',
+        url,
+        headers: {
+          'Api-key': env.HOTELBEDS_API_KEY,
+        },
+        responseType: 'stream',
+        timeout: 0,
+      });
+
+      const totalSize = parseInt(response.headers['content-length'] || '0', 10);
+      const totalMB = (totalSize / 1024 / 1024).toFixed(2);
+
+      Logger.info('[DOWNLOAD-UPDATE] Download initiated', {
+        totalSize: `${totalMB} MB`,
+        contentType: response.headers['content-type']
+      });
+
+      const writer = fs.createWriteStream(filePath);
+
+      // Progress tracking variables
+      let downloadedSize = 0;
+      let lastLoggedPercent = 0;
+      let lastLoggedMB = 0;
+
+      response.data.on('data', (chunk: Buffer) => {
+        downloadedSize += chunk.length;
+        const downloadedMB = downloadedSize / 1024 / 1024;
+        const totalMB = totalSize / 1024 / 1024;
+        const percent = totalSize > 0 ? Math.floor((downloadedSize / totalSize) * 100) : 0;
+        const elapsedSeconds = (Date.now() - startTime) / 1000;
+        const speedMBps = downloadedMB / elapsedSeconds;
+
+        const shouldLog =
+          (percent >= lastLoggedPercent + 5) ||
+          (downloadedMB >= lastLoggedMB + 10);
+
+        if (shouldLog) {
+          if (totalSize > 0) {
+            Logger.info('[DOWNLOAD-UPDATE] Progress update', {
+              progress: `${percent}%`,
+              downloaded: `${downloadedMB.toFixed(2)} MB`,
+              total: `${totalMB.toFixed(2)} MB`,
+              speed: `${speedMBps.toFixed(2)} MB/s`
+            });
+          } else {
+            Logger.info('[DOWNLOAD-UPDATE] Progress update', {
+              downloaded: `${downloadedMB.toFixed(2)} MB`,
+              speed: `${speedMBps.toFixed(2)} MB/s`
+            });
+          }
+
+          this.processingStatus.progress = percent;
+          lastLoggedPercent = percent;
+          lastLoggedMB = downloadedMB;
+        }
+      });
+
+      response.data.pipe(writer);
+
+      await new Promise<void>((resolve, reject) => {
+        writer.on('finish', () => resolve());
+        writer.on('error', reject);
+        response.data.on('error', reject);
+      });
+
+      const duration = ((Date.now() - startTime) / 1000).toFixed(2);
+      const finalSizeMB = (downloadedSize / 1024 / 1024).toFixed(2);
+
+      Logger.info('[DOWNLOAD-UPDATE] Download completed successfully', {
+        fileName,
+        fileSize: `${finalSizeMB} MB`,
+        duration: `${duration}s`
+      });
+
+      this.processingStatus.currentAction = null;
+      this.processingStatus.progress = 100;
+      this.processingStatus.lastCompleted = 'download_update';
+
+      return {
+        status: 'downloaded',
+        fileName,
+        filePath,
+        fileSize: downloadedSize,
+        fileSizeMB: finalSizeMB,
+        duration: `${duration}s`,
+        timestamp: new Date(),
+      };
+    } catch (error: any) {
+      this.processingStatus.currentAction = null;
+
+      Logger.error('[DOWNLOAD-UPDATE] Download failed', {
+        error: error.message,
+        url: `${env.HOTELBEDS_BASE_URL}${env.HOTELBEDS_UPDATE_ENDPOINT}`,
+        statusCode: error.response?.status,
+        statusText: error.response?.statusText
+      });
+
+      throw new Error(`Update download failed: ${error.message}`);
+    }
+  }
+
   // ============================================
   // EXTRACT METHODS
   // ============================================
@@ -348,53 +479,10 @@ export class HotelBedFileRepository {
 
   private async cleanDatabase(): Promise<void> {
     try {
-      console.log('='.repeat(60));
-      console.log('🧹 STARTING DATABASE CLEANUP');
-      console.log('='.repeat(60));
       Logger.info('[CLEAN] Starting complete database cleanup');
 
-      const startTime = Date.now();
-
-      // First, check table sizes for estimation
-      console.log('📊 Step 1: Analyzing database size...');
-      try {
-        const [sizeInfo] = await pool.query(`
-          SELECT 
-            table_name,
-            table_rows,
-            ROUND(((data_length + index_length) / 1024 / 1024), 2) AS size_mb
-          FROM information_schema.TABLES 
-          WHERE table_schema = DATABASE()
-          ORDER BY (data_length + index_length) DESC
-        `) as any;
-
-        const totalRows = sizeInfo.reduce((sum: number, t: any) => sum + (t.table_rows || 0), 0);
-        const totalSize = sizeInfo.reduce((sum: number, t: any) => sum + (t.size_mb || 0), 0);
-
-        console.log(`   📈 Total estimated rows: ${totalRows.toLocaleString()}`);
-        console.log(`   💾 Total database size: ${totalSize.toFixed(2)} MB`);
-        console.log(`   ⏱️  Estimated cleanup time: ${Math.ceil(totalRows / 1000)} seconds`);
-
-        // Show largest tables
-        console.log('\n   📊 Largest tables:');
-        sizeInfo.slice(0, 5).forEach((t: any) => {
-          console.log(`      • ${t.table_name}: ${(t.table_rows || 0).toLocaleString()} rows (${t.size_mb} MB)`);
-        });
-      } catch (err) {
-        console.log('   ⚠️  Could not analyze size, continuing...');
-      }
-
       // Disable foreign key checks temporarily
-      console.log('\n⚙️  Step 2: Disabling foreign key checks...');
       await pool.query('SET FOREIGN_KEY_CHECKS = 0');
-      console.log('✅ Foreign key checks disabled');
-
-      // Additional optimizations for large datasets
-      console.log('\n⚙️  Step 3: Applying performance optimizations...');
-      await pool.query('SET SESSION sql_log_bin = 0'); // Disable binary logging if allowed
-      await pool.query('SET SESSION unique_checks = 0'); // Disable unique checks
-      await pool.query('SET SESSION autocommit = 1'); // Ensure autocommit is on
-      console.log('✅ Performance optimizations applied');
 
       // Truncate all tables in reverse order (to handle foreign keys)
       const tables = [
@@ -427,122 +515,29 @@ export class HotelBedFileRepository {
         'processing_queue'
       ];
 
-      console.log(`\n📋 Step 4: Preparing to truncate ${tables.length} tables...`);
-
-      // Execute truncates in parallel batches for maximum speed
-      console.log('\n🚀 Step 5: Executing parallel truncate operations...');
-      console.log('Progress:\n');
-      console.time('⏱️  Total truncate duration');
-
       let cleaned = 0;
-      let failed = 0;
-      const batchSize = 10; // Increased batch size for faster processing
-      const failedTables: string[] = [];
-
-      for (let i = 0; i < tables.length; i += batchSize) {
-        const batch = tables.slice(i, i + batchSize);
-        const batchNum = Math.floor(i / batchSize) + 1;
-        const totalBatches = Math.ceil(tables.length / batchSize);
-
-        const batchStartTime = Date.now();
-        console.log(`📦 Batch ${batchNum}/${totalBatches}: Processing ${batch.length} tables...`);
-
-        const batchResults = await Promise.allSettled(
-          batch.map(async (table) => {
-            const tableStartTime = Date.now();
-            try {
-              // Try TRUNCATE first (faster)
-              await pool.query(`TRUNCATE TABLE \`${table}\``);
-              const tableDuration = Date.now() - tableStartTime;
-              cleaned++;
-              const progress = ((cleaned / tables.length) * 100).toFixed(1);
-              console.log(`   ✓ [${cleaned}/${tables.length}] ${progress}% - ${table} (${tableDuration}ms)`);
-              Logger.info('[CLEAN] Table cleaned', { table, durationMs: tableDuration });
-              return { table, success: true, duration: tableDuration };
-            } catch (err: any) {
-              // If TRUNCATE fails, try DELETE (slower but more reliable)
-              try {
-                console.log(`   ⚠️  TRUNCATE failed for ${table}, trying DELETE...`);
-                await pool.query(`DELETE FROM \`${table}\``);
-                const tableDuration = Date.now() - tableStartTime;
-                cleaned++;
-                const progress = ((cleaned / tables.length) * 100).toFixed(1);
-                console.log(`   ✓ [${cleaned}/${tables.length}] ${progress}% - ${table} (${tableDuration}ms, DELETE)`);
-                return { table, success: true, duration: tableDuration, method: 'DELETE' };
-              } catch (deleteErr: any) {
-                failed++;
-                failedTables.push(table);
-                console.log(`   ✗ Failed - ${table}: ${deleteErr.message}`);
-                Logger.warn('[CLEAN] Failed to clean table', { table, error: deleteErr.message });
-                return { table, success: false, error: deleteErr.message };
-              }
-            }
-          })
-        );
-
-        const batchDuration = Date.now() - batchStartTime;
-        const batchSucceeded = batchResults.filter(r => r.status === 'fulfilled').length;
-
-        if (batchSucceeded === batch.length) {
-          console.log(`   ✅ Batch ${batchNum} completed in ${(batchDuration / 1000).toFixed(2)}s\n`);
-        } else {
-          console.log(`   ⚠️  Batch ${batchNum}: ${batchSucceeded}/${batch.length} succeeded (${(batchDuration / 1000).toFixed(2)}s)\n`);
+      for (const table of tables) {
+        try {
+          await pool.query(`TRUNCATE TABLE ${table}`);
+          cleaned++;
+          Logger.info('[CLEAN] Table cleaned', { table });
+        } catch (error: any) {
+          // Table might not exist, continue
+          Logger.warn('[CLEAN] Failed to clean table', {
+            table,
+            error: error.message
+          });
         }
       }
 
-      console.timeEnd('⏱️  Total truncate duration');
-      console.log('✅ All tables processed');
-
-      // Re-enable settings
-      console.log('\n⚙️  Step 6: Restoring database settings...');
+      // Re-enable foreign key checks
       await pool.query('SET FOREIGN_KEY_CHECKS = 1');
-      await pool.query('SET SESSION unique_checks = 1');
-      await pool.query('SET SESSION sql_log_bin = 1');
-      console.log('✅ Database settings restored');
-
-      const duration = Date.now() - startTime;
-
-      console.log('\n' + '='.repeat(60));
-      if (failed === 0) {
-        console.log('✨ DATABASE CLEANUP COMPLETED SUCCESSFULLY');
-      } else {
-        console.log('⚠️  DATABASE CLEANUP COMPLETED WITH WARNINGS');
-      }
-      console.log('='.repeat(60));
-      console.log(`📊 Statistics:`);
-      console.log(`   - Tables cleaned: ${cleaned}/${tables.length}`);
-      console.log(`   - Failed: ${failed}`);
-      console.log(`   - Success rate: ${((cleaned / tables.length) * 100).toFixed(1)}%`);
-      console.log(`   - Total duration: ${(duration / 1000).toFixed(2)} seconds (${Math.floor(duration / 60000)}m ${Math.floor((duration % 60000) / 1000)}s)`);
-      console.log(`   - Average per table: ${(duration / tables.length).toFixed(0)} ms`);
-
-      if (failed > 0) {
-        console.log(`\n   ❌ Failed tables:`);
-        failedTables.forEach(table => console.log(`      • ${table}`));
-      }
-      console.log('='.repeat(60));
 
       Logger.info('[CLEAN] Database cleanup completed', {
         tablesCleaned: cleaned,
-        totalTables: tables.length,
-        failed,
-        successRate: ((cleaned / tables.length) * 100).toFixed(1),
-        durationMs: duration,
-        durationSec: (duration / 1000).toFixed(2)
+        totalTables: tables.length
       });
-
-      if (failed > 0) {
-        console.warn(`\n⚠️  Warning: ${failed} table(s) failed to clean. Review the logs above.`);
-      }
-
     } catch (error: any) {
-      console.error('\n' + '='.repeat(60));
-      console.error('💥 CRITICAL ERROR: DATABASE CLEANUP FAILED');
-      console.error('='.repeat(60));
-      console.error('Error message:', error.message);
-      console.error('Stack trace:', error.stack);
-      console.error('='.repeat(60));
-
       Logger.error('[CLEAN] Database cleanup failed', {
         error: error.message,
         stack: error.stack
@@ -688,6 +683,126 @@ export class HotelBedFileRepository {
       });
 
       throw new Error(`Database import failed: ${error.message}`);
+    }
+  }
+
+  /**
+   * Import update data to database (NO database cleanup)
+   * @param extractedPath Path to extracted directory
+   * @returns Import result with statistics
+   */
+  async importUpdateToDatabase(extractedPath: string): Promise<any> {
+    const startTime = Date.now();
+    this.processingStatus.currentAction = 'importing_update';
+    this.processingStatus.progress = 0;
+
+    try {
+      Logger.info('[IMPORT-UPDATE] Starting UPDATE database import', { extractedPath });
+
+      // Verify extracted directory exists
+      if (!fs.existsSync(extractedPath)) {
+        throw new Error(`Extracted directory not found: ${extractedPath}`);
+      }
+
+      const importResults: any = {
+        apiMetadata: { imported: 0, failed: 0, duration: '0s' },
+        hotels: { imported: 0, failed: 0, duration: '0s' },
+        categories: { imported: 0, failed: 0, duration: '0s' },
+        chains: { imported: 0, failed: 0, duration: '0s' },
+        destinations: { imported: 0, failed: 0, duration: '0s' },
+        hotelDetails: {
+          files: 0,
+          contracts: 0,
+          roomAllocations: 0,
+          inventory: 0,
+          rates: 0,
+          supplements: 0,
+          occupancyRules: 0,
+          emailSettings: 0,
+          rateTags: 0,
+          configurations: 0,
+          promotions: 0,
+          specialRequests: 0,
+          groups: 0,
+          cancellationPolicies: 0,
+          specialConditions: 0,
+          roomFeatures: 0,
+          pricingRules: 0,
+          taxInfo: 0,
+          failed: 0,
+          duration: '0s'
+        }
+      };
+
+      // Import API Metadata
+      Logger.info('[IMPORT-UPDATE] Step 1: Importing API metadata');
+      this.processingStatus.progress = 2;
+      importResults.apiMetadata = await this.importAPIMetadata(extractedPath);
+
+      // Import Hotels (Basic Info)
+      Logger.info('[IMPORT-UPDATE] Step 2: Importing hotels (basic info)');
+      this.processingStatus.progress = 5;
+      importResults.hotels = await this.importHotels(extractedPath);
+
+      // Import Categories
+      Logger.info('[IMPORT-UPDATE] Step 3: Importing categories');
+      this.processingStatus.progress = 8;
+      importResults.categories = await this.importCategories(extractedPath);
+
+      // Import Chains
+      Logger.info('[IMPORT-UPDATE] Step 4: Importing chains');
+      this.processingStatus.progress = 10;
+      importResults.chains = await this.importChains(extractedPath);
+
+      // Import Destinations (with names)
+      Logger.info('[IMPORT-UPDATE] Step 5: Importing destinations (with names)');
+      this.processingStatus.progress = 12;
+      importResults.destinations = await this.importDestinations(extractedPath);
+
+      // Import Hotel Detail Files (ALL sections)
+      Logger.info('[IMPORT-UPDATE] Step 6: Importing hotel detail files (ALL sections)');
+      this.processingStatus.progress = 15;
+      importResults.hotelDetails = await this.importHotelDetailFiles(extractedPath);
+
+      const duration = ((Date.now() - startTime) / 1000).toFixed(2);
+
+      const totalRecords =
+        importResults.hotels.imported +
+        importResults.categories.imported +
+        importResults.chains.imported +
+        importResults.destinations.imported +
+        importResults.hotelDetails.contracts +
+        importResults.hotelDetails.rates +
+        importResults.hotelDetails.inventory;
+
+      Logger.info('[IMPORT-UPDATE] UPDATE import finished successfully', {
+        totalRecords,
+        hotels: importResults.hotels.imported,
+        categories: importResults.categories.imported,
+        chains: importResults.chains.imported,
+        destinations: importResults.destinations.imported,
+        hotelFiles: importResults.hotelDetails.files,
+        totalDuration: `${duration}s`
+      });
+
+      this.processingStatus.currentAction = null;
+      this.processingStatus.progress = 100;
+      this.processingStatus.lastCompleted = 'import_update';
+
+      return {
+        status: 'imported_update',
+        results: importResults,
+        totalRecords,
+        duration: `${duration}s`,
+        timestamp: new Date()
+      };
+    } catch (error: any) {
+      this.processingStatus.currentAction = null;
+      Logger.error('[IMPORT-UPDATE] Database import failed', {
+        error: error.message,
+        stack: error.stack
+      });
+      throw new Error(`Update database import failed: ${error.message}`);
     }
   }
 
