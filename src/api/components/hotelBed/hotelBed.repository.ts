@@ -1138,7 +1138,9 @@ export class HotelBedFileRepository {
       let processedDestinations = 0;
       let processedFiles = 0;
       let failedFiles = 0;
+      let skippedDuplicates = 0;
       const failedFilesList: Array<{ file: string; path: string; error: string }> = [];
+      const processedHotelIds = new Set<number>(); // Track processed hotel IDs to detect duplicates
 
       // ⚡ PERFORMANCE OPTIMIZATION: Disable FK checks for MASSIVE speed boost
       console.log('\n⚙️  Step 3: Applying database performance optimizations...');
@@ -1225,7 +1227,13 @@ export class HotelBedFileRepository {
                     throw new Error('Invalid hotel ID');
                   }
 
+                  // Check for duplicate hotel ID
+                  if (processedHotelIds.has(hotelId)) {
+                    return { hotelId, hotelFile, filePath, isDuplicate: true };
+                  }
+
                   await this.processHotelDetailFile(filePath, hotelId);
+                  processedHotelIds.add(hotelId); // Mark as processed
                   return { hotelId, hotelFile, filePath };
                 })
               );
@@ -1233,7 +1241,18 @@ export class HotelBedFileRepository {
               // Count successes and failures
               fileResults.forEach((result, idx) => {
                 if (result.status === 'fulfilled') {
-                  destProcessed++;
+                  const fileResult = result.value;
+                  if (fileResult.isDuplicate) {
+                    skippedDuplicates++;
+                    // Log skipped duplicate (only to logger, not console for speed)
+                    Logger.info(`[IMPORT] Duplicate hotel detected - skipping`, {
+                      hotelId: fileResult.hotelId,
+                      file: fileResult.hotelFile,
+                      destination: destFolder
+                    });
+                  } else {
+                    destProcessed++;
+                  }
                 } else {
                   destFailed++;
                   // Log failed file details (only to logger, not console for speed)
@@ -1306,7 +1325,7 @@ export class HotelBedFileRepository {
         const batchRate = (batchProcessed / parseFloat(batchDuration)).toFixed(0);
 
         console.log(`   ✅ Batch ${batchNum} completed in ${batchDuration}s (${batchRate} files/sec)`);
-        console.log(`   📊 Batch Stats: ${batchProcessed} processed, ${batchFailed} failed`);
+        console.log(`   📊 Batch Stats: ${batchProcessed} processed, ${batchFailed} failed, ${skippedDuplicates} duplicates skipped`);
 
         // Commit every 20 batches to reduce overhead with many batches
         if (batchNum % 20 === 0) {
@@ -1325,7 +1344,7 @@ export class HotelBedFileRepository {
           console.log('\n' + '─'.repeat(70));
           console.log(`📊 CHECKPOINT (Batch ${batchNum}/${totalBatches})`);
           console.log(`   Progress: ${processedFiles.toLocaleString()}/${totalFiles.toLocaleString()} (${overallProgress}%)`);
-          console.log(`   Speed: ${currentRate} files/sec | ETA: ${etaMinutes}min | Failed: ${failedFiles.toLocaleString()}`);
+          console.log(`   Speed: ${currentRate} files/sec | ETA: ${etaMinutes}min | Failed: ${failedFiles.toLocaleString()} | Duplicates: ${skippedDuplicates.toLocaleString()}`);
           console.log('─'.repeat(70) + '\n');
         }
       }
@@ -1359,6 +1378,7 @@ export class HotelBedFileRepository {
       console.log('📊 Final Statistics:');
       console.log(`   ✅ Total files processed: ${processedFiles.toLocaleString()}/${totalFiles.toLocaleString()}`);
       console.log(`   ❌ Failed files: ${failedFiles.toLocaleString()}`);
+      console.log(`   ⏭️  Duplicate files skipped: ${skippedDuplicates.toLocaleString()}`);
       console.log(`   📂 Destinations processed: ${processedDestinations}/${destFolders.length}`);
       console.log(`   📈 Success rate: ${((processedFiles / totalFiles) * 100).toFixed(2)}%`);
       console.log(`   ⏱️  Total duration: ${minutes}m ${seconds}s`);
@@ -1389,6 +1409,7 @@ export class HotelBedFileRepository {
         totalFiles,
         processedFiles,
         failedFiles,
+        skippedDuplicates,
         failedFilesSample: failedFilesList.slice(0, 10).map(f => f.file), // First 10 failed files
         totalDuration: `${minutes}m ${seconds}s`,
         avgRate: `${avgRate} files/sec`
@@ -1397,6 +1418,7 @@ export class HotelBedFileRepository {
       return {
         files: processedFiles,
         failed: failedFiles,
+        duplicates: skippedDuplicates,
         destinations: processedDestinations,
         duration: `${minutes}m ${seconds}s`,
         avgRate: `${avgRate} files/sec`
