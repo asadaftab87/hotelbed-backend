@@ -4,7 +4,7 @@
   "description": "TypeScript Node.js Express Backend with Service-Repository Architecture",
   "main": "dist/app.js",
   "scripts": {
-    "dev": "cross-env NODE_ENV=development ts-node-dev --respawn --transpile-only -r tsconfig-paths/register src/app.ts",
+    "dev": "cross-env NODE_ENV=development NODE_OPTIONS='--max-old-space-size=20480 --expose-gc' ts-node-dev --respawn --transpile-only -r tsconfig-paths/register src/app.ts",
     "start:dev": "cross-env NODE_ENV=development ts-node-dev --respawn --transpile-only -r tsconfig-paths/register src/app.ts",
     "start:prod": "cross-env NODE_ENV=production node -r tsconfig-paths/register dist/app.js",
     "build": "npm run clean && tsc && tsc-alias",
@@ -12,9 +12,13 @@
     "pm2": "pm2 start npm --name hotelbed-backend -- run serve",
     "watch": "tsc -w",
     "clean": "rm -rf dist",
+    "create-db": "ts-node -r tsconfig-paths/register scripts/createDatabase.ts",
     "create-tables": "ts-node -r tsconfig-paths/register scripts/createTables.ts",
     "reset-db": "ts-node -r tsconfig-paths/register scripts/resetDatabase.ts",
-    "fix-destinations": "ts-node -r tsconfig-paths/register scripts/fixDestinationNames.ts"
+    "fix-destinations": "ts-node -r tsconfig-paths/register scripts/fixDestinationNames.ts",
+    "verify-aurora": "ts-node -r tsconfig-paths/register scripts/verifyAuroraSetup.ts",
+    "enable-s3": "ts-node -r tsconfig-paths/register scripts/enableS3Integration.ts",
+    "test-s3": "ts-node -r tsconfig-paths/register scripts/testS3Direct.ts"
   },
   "keywords": [
     "typescript",
@@ -27,13 +31,16 @@
   "author": "",
   "license": "ISC",
   "dependencies": {
+    "@aws-sdk/client-s3": "^3.922.0",
     "adm-zip": "^0.5.16",
+    "aws-sdk": "^2.1692.0",
     "axios": "^1.6.5",
     "compression": "^1.7.4",
     "cors": "^2.8.5",
     "dotenv": "^16.3.1",
     "express": "^4.18.2",
     "express-rate-limit": "^7.1.5",
+    "fast-csv": "^5.0.5",
     "helmet": "^7.1.0",
     "morgan": "^1.10.0",
     "mysql2": "^3.6.5",

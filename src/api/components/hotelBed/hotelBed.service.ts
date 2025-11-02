@@ -17,30 +17,30 @@ export class HotelBedFileService {
     const serviceStartTime = Date.now();
 
     try {
-      Logger.info('[SERVICE] Starting direct import from existing folder');
+      Logger.info('[SERVICE] 🚀 Starting NEW import process (CSV → S3 → Aurora)');
 
       const extractedPath = await this.repository.findExtractedFolder(folderName);
 
       Logger.info('[SERVICE] Found extracted folder', { path: extractedPath });
 
-      // Direct import (no download, no extract)
-      Logger.info('[SERVICE] Step 1/1: Importing data to database');
+      // NEW: CSV + S3 + LOAD DATA approach
+      Logger.info('[SERVICE] Using optimized import: CSV generation → S3 upload → Aurora LOAD DATA');
       const importResult = await this.repository.importToDatabase(extractedPath);
       Logger.info('[SERVICE] Database import completed', {
         totalRecords: importResult.totalRecords,
-        duration: importResult.duration
+        duration: importResult.totalDuration
       });
 
-      const totalDuration = ((Date.now() - serviceStartTime) / 1000).toFixed(2);
+      const totalDuration = ((Date.now() - serviceStartTime) / 1000 / 60).toFixed(2);
 
       Logger.info('[SERVICE] Direct import finished successfully', {
-        totalDuration: `${totalDuration}s`
+        totalDuration: `${totalDuration} minutes`
       });
 
       return {
         success: true,
         import: importResult,
-        totalDuration: `${totalDuration}s`,
+        totalDuration: `${totalDuration} minutes`,
         timestamp: new Date()
       };
     } catch (error: any) {
@@ -60,10 +60,10 @@ export class HotelBedFileService {
     const serviceStartTime = Date.now();
 
     try {
-      Logger.info('[SERVICE] Starting HotelBeds cache download and extraction process');
+      Logger.info('[SERVICE] 🚀 Starting HotelBeds cache download with NEW import process');
 
       // Step 1: Download
-      Logger.info('[SERVICE] Step 1/2: Downloading cache file');
+      Logger.info('[SERVICE] Step 1/3: Downloading cache file');
       const downloadResult = await this.repository.downloadCacheZip();
       Logger.info('[SERVICE] Download completed', {
         fileName: downloadResult.fileName,
@@ -76,33 +76,29 @@ export class HotelBedFileService {
       const extractResult = await this.repository.extractZipFile(downloadResult.filePath);
       Logger.info('[SERVICE] Extraction completed', {
         totalFiles: extractResult.totalFiles,
-        extractedFiles: extractResult.extractedFiles,
-        jsonFiles: extractResult.filesSummary.jsonFiles,
         duration: extractResult.duration
       });
 
-      // Step 3: Import to Database
-      Logger.info('[SERVICE] Step 3/3: Importing data to database');
+      // Step 3: NEW Import (CSV → S3 → Aurora)
+      Logger.info('[SERVICE] Step 3/3: Importing data using NEW approach (CSV → S3 → Aurora)');
       const importResult = await this.repository.importToDatabase(extractResult.extractedPath);
       Logger.info('[SERVICE] Database import completed', {
         totalRecords: importResult.totalRecords,
-        hotels: importResult.results.hotels.imported,
-        categories: importResult.results.categories.imported,
-        chains: importResult.results.chains.imported,
-        duration: importResult.duration
+        duration: importResult.totalDuration
       });
 
-      const totalDuration = ((Date.now() - serviceStartTime) / 1000).toFixed(2);
+      const totalDuration = ((Date.now() - serviceStartTime) / 1000 / 60).toFixed(2);
 
       Logger.info('[SERVICE] Complete process finished successfully', {
-        totalDuration: `${totalDuration}s`,
+        totalDuration: `${totalDuration} minutes`,
         downloadDuration: downloadResult.duration,
         extractionDuration: extractResult.duration,
-        importDuration: importResult.duration
+        importDuration: importResult.totalDuration
       });
 
       return {
         success: true,
+        method: 'NEW: CSV → S3 → Aurora LOAD DATA',
         download: {
           fileName: downloadResult.fileName,
           filePath: downloadResult.filePath,
@@ -111,18 +107,12 @@ export class HotelBedFileService {
         },
         extraction: {
           extractedPath: extractResult.extractedPath,
-          extractedFolder: extractResult.extractedFolder,
           totalFiles: extractResult.totalFiles,
-          extractedFiles: extractResult.extractedFiles,
-          filesSummary: extractResult.filesSummary,
           duration: extractResult.duration
         },
-        import: {
-          totalRecords: importResult.totalRecords,
-          results: importResult.results,
-          duration: importResult.duration
-        },
-        totalDuration: `${totalDuration}s`,
+        import: importResult,
+        totalDuration: `${totalDuration} minutes`,
+        targetTime: '30 minutes',
         timestamp: new Date()
       };
     } catch (error: any) {
@@ -142,10 +132,10 @@ export class HotelBedFileService {
     const serviceStartTime = Date.now();
 
     try {
-      Logger.info('[SERVICE] Starting HotelBeds update download and extraction process');
+      Logger.info('[SERVICE] 🚀 Starting HotelBeds update download with NEW import process');
 
       // Step 1: Download
-      Logger.info('[SERVICE] Step 1/2: Downloading update file');
+      Logger.info('[SERVICE] Step 1/3: Downloading update file');
       const downloadResult = await this.repository.downloadUpdateZip();
       Logger.info('[SERVICE] Download completed', {
         fileName: downloadResult.fileName,
@@ -158,33 +148,29 @@ export class HotelBedFileService {
       const extractResult = await this.repository.extractZipFile(downloadResult.filePath);
       Logger.info('[SERVICE] Extraction completed', {
         totalFiles: extractResult.totalFiles,
-        extractedFiles: extractResult.extractedFiles,
-        jsonFiles: extractResult.filesSummary.jsonFiles,
         duration: extractResult.duration
       });
 
-      // Step 3: Import to Database (NO CLEAN for updates)
-      Logger.info('[SERVICE] Step 3/3: Importing update data to database (no cleanup)');
-      const importResult = await this.repository.importUpdateToDatabase(extractResult.extractedPath);
+      // Step 3: NEW Import (CSV → S3 → Aurora)
+      Logger.info('[SERVICE] Step 3/3: Importing update data using NEW approach (CSV → S3 → Aurora)');
+      const importResult = await this.repository.importToDatabase(extractResult.extractedPath);
       Logger.info('[SERVICE] Database import completed', {
         totalRecords: importResult.totalRecords,
-        hotels: importResult.results.hotels.imported,
-        categories: importResult.results.categories.imported,
-        chains: importResult.results.chains.imported,
-        duration: importResult.duration
+        duration: importResult.totalDuration
       });
 
-      const totalDuration = ((Date.now() - serviceStartTime) / 1000).toFixed(2);
+      const totalDuration = ((Date.now() - serviceStartTime) / 1000 / 60).toFixed(2);
 
       Logger.info('[SERVICE] Complete update process finished successfully', {
-        totalDuration: `${totalDuration}s`,
+        totalDuration: `${totalDuration} minutes`,
         downloadDuration: downloadResult.duration,
         extractionDuration: extractResult.duration,
-        importDuration: importResult.duration
+        importDuration: importResult.totalDuration
       });
 
       return {
         success: true,
+        method: 'NEW: CSV → S3 → Aurora LOAD DATA',
         download: {
           fileName: downloadResult.fileName,
           filePath: downloadResult.filePath,
@@ -193,18 +179,12 @@ export class HotelBedFileService {
         },
         extraction: {
           extractedPath: extractResult.extractedPath,
-          extractedFolder: extractResult.extractedFolder,
           totalFiles: extractResult.totalFiles,
-          extractedFiles: extractResult.extractedFiles,
-          filesSummary: extractResult.filesSummary,
           duration: extractResult.duration
         },
-        import: {
-          totalRecords: importResult.totalRecords,
-          results: importResult.results,
-          duration: importResult.duration
-        },
-        totalDuration: `${totalDuration}s`,
+        import: importResult,
+        totalDuration: `${totalDuration} minutes`,
+        targetTime: '30 minutes',
         timestamp: new Date()
       };
     } catch (error: any) {
