@@ -49,7 +49,7 @@ export class CSVGenerator {
     for (const table of tables) {
       const filePath = path.join(this.outputDir, `${table}.csv`);
       const writeStream = fs.createWriteStream(filePath, {
-        highWaterMark: 1024 * 1024 * 64, // 64MB buffer - r7a.xlarge has 32GB RAM, can afford larger buffers
+        highWaterMark: 1024 * 1024 * 128, // 128MB buffer - USE THE 32GB RAM!
         encoding: 'utf8',
         flags: 'w',
       });
@@ -496,7 +496,7 @@ export class CSVGenerator {
 
         const fileStream = createReadStream(filePath, {
           encoding: 'utf-8',
-          highWaterMark: 1024 * 1024 * 8, // 8MB buffer - r7a.xlarge has plenty of RAM for larger buffers
+          highWaterMark: 1024 * 1024 * 16, // 16MB buffer - USE THE 32GB RAM!
         });
         const rl = createInterface({
           input: fileStream,

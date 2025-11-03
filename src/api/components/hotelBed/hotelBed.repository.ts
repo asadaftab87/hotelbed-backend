@@ -321,9 +321,9 @@ export class HotelBedFileRepository {
     // Removed processedHotelIds Set - DB IGNORE will handle duplicates, saves memory
 
     // Process files in parallel batches optimized for r7a.xlarge (4 vCPUs, 32GB RAM)
-    // Aggressive parallelization - 32GB RAM allows 50+ parallel files for I/O bound streaming
-    const BATCH_SIZE = 1000; // Large batches - 32GB RAM can handle it
-    const CONCURRENT_FILES = 50; // Process 50 files in parallel - r7a.xlarge has 32GB RAM, can handle aggressive parallelization
+    // MAXIMUM aggressive parallelization - use the full 32GB RAM!
+    const BATCH_SIZE = 25000; // Very large batches - 32GB RAM can easily handle this
+    const CONCURRENT_FILES = 200; // Process 200 files in parallel - streaming is I/O bound, memory per file is tiny, can go very aggressive!
     let lastProgress = 0;
 
     // Collect all files first
@@ -375,8 +375,8 @@ export class HotelBedFileRepository {
         });
       }
 
-      // Garbage collection less frequently - r7a.xlarge has 32GB RAM, can hold more in memory
-      if (global.gc && i % (BATCH_SIZE * 4) === 0) {
+      // Garbage collection much less frequently - r7a.xlarge has 32GB RAM, we want to USE it!
+      if (global.gc && i % (BATCH_SIZE * 10) === 0) {
         global.gc();
       }
 
