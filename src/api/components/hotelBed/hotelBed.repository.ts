@@ -657,6 +657,25 @@ export class HotelBedFileRepository {
             continue;
           }
 
+          // Column mappings for each table
+          const columnMappings: Record<string, string> = {
+            hotel_contracts: '(hotel_id,destination_code,contract_code,rate_code,board_code,contract_type,date_from,date_to,currency,board_type)',
+            hotel_room_allocations: '(hotel_id,room_code,board_code,min_adults,max_adults,min_children,max_children,min_pax,max_pax,allocation)',
+            hotel_inventory: '(hotel_id,room_code,board_code,date_from,date_to,availability_data)',
+            hotel_rates: '(hotel_id,room_code,board_code,date_from,date_to,rate_type,base_price,tax_amount,adults,board_type,price)',
+            hotel_supplements: '(hotel_id,date_from,date_to,supplement_code,supplement_type,discount_percent,min_nights)',
+            hotel_occupancy_rules: '(hotel_id,rule_from,rule_to,is_allowed)',
+            hotel_email_settings: '(hotel_id,date_from,date_to,email_type,room_type,room_code,email_content)',
+            hotel_rate_tags: '(hotel_id,rate_code,tag_type,tag_value)',
+            hotel_configurations: '(hotel_id,config_key,config_value,date_from,date_to)',
+            hotel_groups: '(hotel_id,group_code,group_type,date_from,date_to)',
+            hotel_special_requests: '(hotel_id,request_code,request_type,request_description)',
+            hotel_special_conditions: '(hotel_id,condition_code,condition_type,condition_description)',
+            hotel_pricing_rules: '(hotel_id,rule_code,rule_type,date_from,date_to,adjustment_value)',
+          };
+
+          const columns = columnMappings[table.name] || '';
+
           const query = `
             LOAD DATA LOCAL INFILE '${csvPath}'
             IGNORE
@@ -665,6 +684,7 @@ export class HotelBedFileRepository {
             ENCLOSED BY '"'
             LINES TERMINATED BY '\\n'
             IGNORE 1 ROWS
+            ${columns}
           `;
 
           const [result]: any = await connection.query(query);
