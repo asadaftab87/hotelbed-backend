@@ -4,6 +4,7 @@ import Logger from '@/core/Logger';
 import axios from 'axios';
 import fs from 'fs';
 import path from 'path';
+import { createReadStream } from 'fs';
 import { env } from '@config/globals';
 import AdmZip from 'adm-zip';
 import { CSVGenerator } from '@/utils/csvGenerator';
@@ -527,6 +528,13 @@ export class HotelBedFileRepository {
     // Close all writers
     await this.csvGenerator.closeWriters(writers);
 
+    // Log duplicate detection summary
+    console.log('\n📊 DUPLICATE DETECTION SUMMARY:');
+    this.csvGenerator.logDuplicateSummary();
+
+    // Clear duplicate detector to free memory
+    this.csvGenerator.clearDuplicateDetector();
+
     const duration = ((Date.now() - startTime) / 1000).toFixed(2);
     const summary = this.csvGenerator.getCSVSummary(writers);
 
@@ -573,7 +581,14 @@ export class HotelBedFileRepository {
    */
   private async loadFromS3ToAurora(s3Locations: Record<string, string>): Promise<any> {
     const startTime = Date.now();
-    const connection = await pool.getConnection();
+    let connection;
+    
+    try {
+      connection = await pool.getConnection();
+    } catch (error: any) {
+      Logger.error('[LOAD] Failed to get database connection', { error: error.message });
+      throw error;
+    }
 
     try {
       console.log('   🔍 Checking S3 integration...');
@@ -598,11 +613,14 @@ export class HotelBedFileRepository {
       
       console.log('   🔧 Optimizing database settings...');
       
-      // Optimize for bulk load
+      // Optimize for bulk load with extended timeouts
       await connection.query('SET FOREIGN_KEY_CHECKS = 0');
       await connection.query('SET UNIQUE_CHECKS = 0');
       await connection.query('SET AUTOCOMMIT = 0');
       await connection.query('SET SESSION wait_timeout = 28800'); // 8 hours
+      await connection.query('SET SESSION interactive_timeout = 28800'); // 8 hours
+      await connection.query('SET SESSION net_read_timeout = 3600'); // 1 hour
+      await connection.query('SET SESSION net_write_timeout = 3600'); // 1 hour
 
       const tables = [
         { name: 'hotel_contracts', csv: 'hotel_contracts.csv' },
@@ -628,14 +646,19 @@ export class HotelBedFileRepository {
 
       for (const table of tables) {
         const tableStart = Date.now();
-        
-        const s3Url = this.s3Uploader.getS3Url(table.csv);
         console.log(`   Loading ${table.name}...`);
 
         try {
-          // LOAD DATA FROM S3 - Aurora feature
-        const query = `
-            LOAD DATA FROM S3 '${s3Url}'
+          // Use LOAD DATA LOCAL INFILE instead of S3 (works without IAM role)
+          const csvPath = path.join(this.csvDir, table.csv);
+          
+          if (!fs.existsSync(csvPath)) {
+            console.log(`   ⏭️  Skipping ${table.name} (no CSV file)`);
+            continue;
+          }
+
+          const query = `
+            LOAD DATA LOCAL INFILE '${csvPath}'
             IGNORE
             INTO TABLE ${table.name}
             FIELDS TERMINATED BY ','
@@ -644,13 +667,11 @@ export class HotelBedFileRepository {
             IGNORE 1 ROWS
           `;
 
-          console.log(`   🔍 Executing LOAD DATA FROM S3: ${s3Url}`);
           const [result]: any = await connection.query(query);
           const duration = ((Date.now() - tableStart) / 1000).toFixed(2);
+          const rowsAffected = result.affectedRows || 0;
           
-          // Get actual rows affected
-          const rowsAffected = result.affectedRows || 'unknown';
-          console.log(`   ✅ ${table.name} loaded in ${duration}s (Rows: ${rowsAffected})`);
+          console.log(`   ✅ ${table.name} loaded in ${duration}s (Rows: ${rowsAffected.toLocaleString()})`);
           
           results[table.name] = {
             success: true,
@@ -659,22 +680,10 @@ export class HotelBedFileRepository {
           };
         } catch (error: any) {
           console.error(`   ❌ ${table.name} failed:`, error.message);
-          console.error(`   S3 URL: ${s3Url}`);
-          console.error(`   Full error:`, error);
-          
-          // Check if it's S3 integration error
-          if (error.message.includes('S3') || error.message.includes('s3') || error.message.includes('Access denied')) {
-            console.error(`   ⚠️  S3 Integration Issue: Make sure IAM role is attached and procedure is enabled`);
-            console.error(`   Run: npm run enable-s3`);
-          }
-          
           results[table.name] = {
             success: false,
             error: error.message,
-            s3Url: s3Url,
           };
-          
-          // Don't stop on single table error, continue with others
         }
       }
 

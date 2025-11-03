@@ -4,12 +4,15 @@ import { format } from 'fast-csv';
 import { createReadStream } from 'fs';
 import { createInterface } from 'readline';
 import Logger from '@/core/Logger';
+import { DuplicateDetector } from './duplicateDetector';
 
 export class CSVGenerator {
   private readonly outputDir: string;
+  private duplicateDetector: DuplicateDetector;
 
   constructor(outputDir: string = '/tmp/hotelbed_csv') {
     this.outputDir = outputDir;
+    this.duplicateDetector = new DuplicateDetector();
     this.ensureOutputDir();
   }
 
@@ -101,7 +104,7 @@ export class CSVGenerator {
   }
 
   /**
-   * Write contracts to CSV
+   * Write contracts to CSV with duplicate detection
    */
   writeContracts(writer: any, hotelId: number, lines: string[]) {
     if (!lines || lines.length === 0) return;
@@ -109,7 +112,7 @@ export class CSVGenerator {
     for (const line of lines) {
       const parts = line.split(':');
       if (parts.length >= 13) {
-        writer.stream.write({
+        const data = {
           hotel_id: hotelId,
           destination_code: parts[1] || null,
           contract_code: parts[2] || null,
@@ -120,14 +123,21 @@ export class CSVGenerator {
           date_to: parts[10] || null,
           currency: parts[12] || null,
           board_type: parts[13] || null,
-        });
+        };
+
+        // Skip if duplicate
+        if (this.duplicateDetector.isContractDuplicate(hotelId, data)) {
+          continue;
+        }
+
+        writer.stream.write(data);
         writer.count++;
       }
     }
   }
 
   /**
-   * Write room allocations to CSV
+   * Write room allocations to CSV with duplicate detection
    */
   writeRoomAllocations(writer: any, hotelId: number, lines: string[]) {
     if (!lines || lines.length === 0) return;
@@ -135,7 +145,7 @@ export class CSVGenerator {
     for (const line of lines) {
       const parts = line.split(':');
       if (parts.length >= 8) {
-        writer.stream.write({
+        const data = {
           hotel_id: hotelId,
           room_code: parts[0] || null,
           board_code: parts[1] || null,
@@ -146,14 +156,21 @@ export class CSVGenerator {
           min_pax: parseInt(parts[6]) || 0,
           max_pax: parseInt(parts[7]) || 0,
           allocation: parseInt(parts[8]) || 0,
-        });
+        };
+
+        // Skip if duplicate
+        if (this.duplicateDetector.isRoomAllocationDuplicate(hotelId, data)) {
+          continue;
+        }
+
+        writer.stream.write(data);
         writer.count++;
       }
     }
   }
 
   /**
-   * Write inventory to CSV
+   * Write inventory to CSV with duplicate detection
    */
   writeInventory(writer: any, hotelId: number, lines: string[]) {
     if (!lines || lines.length === 0) return;
@@ -161,21 +178,28 @@ export class CSVGenerator {
     for (const line of lines) {
       const parts = line.split(':');
       if (parts.length >= 5) {
-        writer.stream.write({
+        const data = {
           hotel_id: hotelId,
           room_code: parts[2] || null,
           board_code: parts[3] || null,
           date_from: parts[0] || null,
           date_to: parts[1] || null,
           availability_data: parts[4] || null,
-        });
+        };
+
+        // Skip if duplicate
+        if (this.duplicateDetector.isInventoryDuplicate(hotelId, data)) {
+          continue;
+        }
+
+        writer.stream.write(data);
         writer.count++;
       }
     }
   }
 
   /**
-   * Write rates to CSV (LARGEST TABLE)
+   * Write rates to CSV with duplicate detection (LARGEST TABLE - CRITICAL)
    */
   writeRates(writer: any, hotelId: number, lines: string[]) {
     if (!lines || lines.length === 0) return;
@@ -187,7 +211,7 @@ export class CSVGenerator {
         const rateMatches = ratesString.matchAll(/\(([^,]+),([^,]+),([^,]+),([^,]+),([^,]+),([^)]+)\)/g);
 
         for (const rateMatch of rateMatches) {
-          writer.stream.write({
+          const data = {
             hotel_id: hotelId,
             room_code: parts[2] || null,
             board_code: parts[3] || null,
@@ -199,7 +223,14 @@ export class CSVGenerator {
             adults: parseInt(rateMatch[4]) || 0,
             board_type: rateMatch[5] || null,
             price: parseFloat(rateMatch[6]) || 0,
-          });
+          };
+
+          // Skip if duplicate (CRITICAL for performance)
+          if (this.duplicateDetector.isRateDuplicate(hotelId, data)) {
+            continue;
+          }
+
+          writer.stream.write(data);
           writer.count++;
         }
       }
@@ -207,7 +238,7 @@ export class CSVGenerator {
   }
 
   /**
-   * Write supplements to CSV
+   * Write supplements to CSV with duplicate detection
    */
   writeSupplements(writer: any, hotelId: number, lines: string[]) {
     if (!lines || lines.length === 0) return;
@@ -215,7 +246,7 @@ export class CSVGenerator {
     for (const line of lines) {
       const parts = line.split(':');
       if (parts.length >= 6) {
-        writer.stream.write({
+        const data = {
           hotel_id: hotelId,
           date_from: parts[0] || null,
           date_to: parts[1] || null,
@@ -223,14 +254,21 @@ export class CSVGenerator {
           supplement_type: parts[4] || null,
           discount_percent: parseFloat(parts[6]) || 0,
           min_nights: parseInt(parts[8]) || 0,
-        });
+        };
+
+        // Skip if duplicate
+        if (this.duplicateDetector.isSupplementDuplicate(hotelId, data)) {
+          continue;
+        }
+
+        writer.stream.write(data);
         writer.count++;
       }
     }
   }
 
   /**
-   * Write occupancy rules to CSV
+   * Write occupancy rules to CSV with duplicate detection
    */
   writeOccupancyRules(writer: any, hotelId: number, lines: string[]) {
     if (!lines || lines.length === 0) return;
@@ -238,19 +276,26 @@ export class CSVGenerator {
     for (const line of lines) {
       const parts = line.split(':');
       if (parts.length >= 3) {
-        writer.stream.write({
+        const data = {
           hotel_id: hotelId,
           rule_from: parts[0] || null,
           rule_to: parts[1] || null,
           is_allowed: parts[2] || null,
-        });
+        };
+
+        // Skip if duplicate
+        if (this.duplicateDetector.isOccupancyRuleDuplicate(hotelId, data)) {
+          continue;
+        }
+
+        writer.stream.write(data);
         writer.count++;
       }
     }
   }
 
   /**
-   * Write email settings to CSV
+   * Write email settings to CSV with duplicate detection
    */
   writeEmailSettings(writer: any, hotelId: number, lines: string[]) {
     if (!lines || lines.length === 0) return;
@@ -258,7 +303,7 @@ export class CSVGenerator {
     for (const line of lines) {
       const parts = line.split(':');
       if (parts.length >= 7) {
-        writer.stream.write({
+        const data = {
           hotel_id: hotelId,
           date_from: parts[1] || null,
           date_to: parts[2] || null,
@@ -266,14 +311,21 @@ export class CSVGenerator {
           room_type: parts[5] || null,
           room_code: parts[6] || null,
           email_content: parts[8] || null,
-        });
+        };
+
+        // Skip if duplicate
+        if (this.duplicateDetector.isEmailSettingDuplicate(hotelId, data)) {
+          continue;
+        }
+
+        writer.stream.write(data);
         writer.count++;
       }
     }
   }
 
   /**
-   * Write rate tags to CSV
+   * Write rate tags to CSV with duplicate detection
    */
   writeRateTags(writer: any, hotelId: number, lines: string[]) {
     if (!lines || lines.length === 0) return;
@@ -281,19 +333,26 @@ export class CSVGenerator {
     for (const line of lines) {
       const parts = line.split(':');
       if (parts.length >= 3) {
-        writer.stream.write({
+        const data = {
           hotel_id: hotelId,
           rate_code: parts[0] || null,
           tag_type: parts[1] || null,
           tag_value: parts[2] || null,
-        });
+        };
+
+        // Skip if duplicate
+        if (this.duplicateDetector.isRateTagDuplicate(hotelId, data)) {
+          continue;
+        }
+
+        writer.stream.write(data);
         writer.count++;
       }
     }
   }
 
   /**
-   * Write configurations to CSV
+   * Write configurations to CSV with duplicate detection
    */
   writeConfigurations(writer: any, hotelId: number, lines: string[]) {
     if (!lines || lines.length === 0) return;
@@ -301,20 +360,27 @@ export class CSVGenerator {
     for (const line of lines) {
       const parts = line.split(':');
       if (parts.length >= 4) {
-        writer.stream.write({
+        const data = {
           hotel_id: hotelId,
           config_key: parts[0] || null,
           config_value: parts[1] || null,
           date_from: parts[2] || null,
           date_to: parts[3] || null,
-        });
+        };
+
+        // Skip if duplicate
+        if (this.duplicateDetector.isConfigurationDuplicate(hotelId, data)) {
+          continue;
+        }
+
+        writer.stream.write(data);
         writer.count++;
       }
     }
   }
 
   /**
-   * Write promotions to CSV
+   * Write promotions to CSV with duplicate detection
    */
   writePromotions(writer: any, hotelId: number, lines: string[]) {
     if (!lines || lines.length === 0) return;
@@ -322,21 +388,28 @@ export class CSVGenerator {
     for (const line of lines) {
       const parts = line.split(':');
       if (parts.length >= 5) {
-        writer.stream.write({
+        const data = {
           hotel_id: hotelId,
           promo_code: parts[0] || null,
           promo_type: parts[1] || null,
           date_from: parts[2] || null,
           date_to: parts[3] || null,
           discount_value: parseFloat(parts[4]) || 0,
-        });
+        };
+
+        // Skip if duplicate
+        if (this.duplicateDetector.isPromotionDuplicate(hotelId, data)) {
+          continue;
+        }
+
+        writer.stream.write(data);
         writer.count++;
       }
     }
   }
 
   /**
-   * Write special requests to CSV
+   * Write special requests to CSV with duplicate detection
    */
   writeSpecialRequests(writer: any, hotelId: number, lines: string[]) {
     if (!lines || lines.length === 0) return;
@@ -344,19 +417,26 @@ export class CSVGenerator {
     for (const line of lines) {
       const parts = line.split(':');
       if (parts.length >= 3) {
-        writer.stream.write({
+        const data = {
           hotel_id: hotelId,
           request_code: parts[0] || null,
           request_type: parts[1] || null,
           request_description: parts[2] || null,
-        });
+        };
+
+        // Skip if duplicate
+        if (this.duplicateDetector.isSpecialRequestDuplicate(hotelId, data)) {
+          continue;
+        }
+
+        writer.stream.write(data);
         writer.count++;
       }
     }
   }
 
   /**
-   * Write groups to CSV
+   * Write groups to CSV with duplicate detection
    */
   writeGroups(writer: any, hotelId: number, lines: string[]) {
     if (!lines || lines.length === 0) return;
@@ -364,20 +444,27 @@ export class CSVGenerator {
     for (const line of lines) {
       const parts = line.split(':');
       if (parts.length >= 4) {
-        writer.stream.write({
+        const data = {
           hotel_id: hotelId,
           group_code: parts[0] || null,
           group_type: parts[1] || null,
           date_from: parts[2] || null,
           date_to: parts[3] || null,
-        });
+        };
+
+        // Skip if duplicate
+        if (this.duplicateDetector.isGroupDuplicate(hotelId, data)) {
+          continue;
+        }
+
+        writer.stream.write(data);
         writer.count++;
       }
     }
   }
 
   /**
-   * Write cancellation policies to CSV
+   * Write cancellation policies to CSV with duplicate detection
    */
   writeCancellationPolicies(writer: any, hotelId: number, lines: string[]) {
     if (!lines || lines.length === 0) return;
@@ -385,20 +472,27 @@ export class CSVGenerator {
     for (const line of lines) {
       const parts = line.split(':');
       if (parts.length >= 4) {
-        writer.stream.write({
+        const data = {
           hotel_id: hotelId,
           policy_code: parts[0] || null,
           days_before: parseInt(parts[1]) || 0,
           penalty_percent: parseFloat(parts[2]) || 0,
           penalty_amount: parseFloat(parts[3]) || 0,
-        });
+        };
+
+        // Skip if duplicate
+        if (this.duplicateDetector.isCancellationPolicyDuplicate(hotelId, data)) {
+          continue;
+        }
+
+        writer.stream.write(data);
         writer.count++;
       }
     }
   }
 
   /**
-   * Write special conditions to CSV
+   * Write special conditions to CSV with duplicate detection
    */
   writeSpecialConditions(writer: any, hotelId: number, lines: string[]) {
     if (!lines || lines.length === 0) return;
@@ -406,19 +500,26 @@ export class CSVGenerator {
     for (const line of lines) {
       const parts = line.split(':');
       if (parts.length >= 3) {
-        writer.stream.write({
+        const data = {
           hotel_id: hotelId,
           condition_code: parts[0] || null,
           condition_type: parts[1] || null,
           condition_description: parts[2] || null,
-        });
+        };
+
+        // Skip if duplicate
+        if (this.duplicateDetector.isSpecialConditionDuplicate(hotelId, data)) {
+          continue;
+        }
+
+        writer.stream.write(data);
         writer.count++;
       }
     }
   }
 
   /**
-   * Write room features to CSV
+   * Write room features to CSV with duplicate detection
    */
   writeRoomFeatures(writer: any, hotelId: number, lines: string[]) {
     if (!lines || lines.length === 0) return;
@@ -426,19 +527,26 @@ export class CSVGenerator {
     for (const line of lines) {
       const parts = line.split(':');
       if (parts.length >= 3) {
-        writer.stream.write({
+        const data = {
           hotel_id: hotelId,
           room_code: parts[0] || null,
           feature_code: parts[1] || null,
           feature_value: parts[2] || null,
-        });
+        };
+
+        // Skip if duplicate
+        if (this.duplicateDetector.isRoomFeatureDuplicate(hotelId, data)) {
+          continue;
+        }
+
+        writer.stream.write(data);
         writer.count++;
       }
     }
   }
 
   /**
-   * Write pricing rules to CSV
+   * Write pricing rules to CSV with duplicate detection
    */
   writePricingRules(writer: any, hotelId: number, lines: string[]) {
     if (!lines || lines.length === 0) return;
@@ -446,21 +554,28 @@ export class CSVGenerator {
     for (const line of lines) {
       const parts = line.split(':');
       if (parts.length >= 5) {
-        writer.stream.write({
+        const data = {
           hotel_id: hotelId,
           rule_code: parts[0] || null,
           rule_type: parts[1] || null,
           date_from: parts[2] || null,
           date_to: parts[3] || null,
           adjustment_value: parseFloat(parts[4]) || 0,
-        });
+        };
+
+        // Skip if duplicate
+        if (this.duplicateDetector.isPricingRuleDuplicate(hotelId, data)) {
+          continue;
+        }
+
+        writer.stream.write(data);
         writer.count++;
       }
     }
   }
 
   /**
-   * Write tax info to CSV
+   * Write tax info to CSV with duplicate detection
    */
   writeTaxInfo(writer: any, hotelId: number, lines: string[]) {
     if (!lines || lines.length === 0) return;
@@ -468,13 +583,20 @@ export class CSVGenerator {
     for (const line of lines) {
       const parts = line.split(':');
       if (parts.length >= 4) {
-        writer.stream.write({
+        const data = {
           hotel_id: hotelId,
           tax_type: parts[0] || null,
           tax_rate: parseFloat(parts[1]) || 0,
           tax_amount: parseFloat(parts[2]) || 0,
           is_included: parts[3] || null,
-        });
+        };
+
+        // Skip if duplicate
+        if (this.duplicateDetector.isTaxInfoDuplicate(hotelId, data)) {
+          continue;
+        }
+
+        writer.stream.write(data);
         writer.count++;
       }
     }
@@ -654,7 +776,7 @@ export class CSVGenerator {
   }
 
   /**
-   * Get summary of generated CSV files
+   * Get summary of generated CSV files with duplicate detection stats
    */
   getCSVSummary(writers: Record<string, any>) {
     const summary: any = {};
@@ -669,6 +791,27 @@ export class CSVGenerator {
     }
 
     return summary;
+  }
+
+  /**
+   * Get duplicate detection statistics
+   */
+  getDuplicateStats() {
+    return this.duplicateDetector.getStats();
+  }
+
+  /**
+   * Log duplicate detection summary
+   */
+  logDuplicateSummary() {
+    this.duplicateDetector.logSummary();
+  }
+
+  /**
+   * Clear duplicate detector memory
+   */
+  clearDuplicateDetector() {
+    this.duplicateDetector.clear();
   }
 }
 
