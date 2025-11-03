@@ -149,5 +149,55 @@ export class S3Uploader {
       throw error;
     }
   }
+
+  /**
+   * Clean entire S3 bucket prefix (delete all files with this prefix)
+   */
+  async cleanBucket(): Promise<void> {
+    try {
+      Logger.info(`[S3] Cleaning bucket prefix: ${this.prefix}/`);
+
+      let continuationToken: string | undefined;
+      let totalDeleted = 0;
+
+      do {
+        // List all objects with the prefix
+        const listParams: AWS.S3.ListObjectsV2Request = {
+          Bucket: this.bucket,
+          Prefix: `${this.prefix}/`,
+        };
+
+        if (continuationToken) {
+          listParams.ContinuationToken = continuationToken;
+        }
+
+        const listResult = await this.s3.listObjectsV2(listParams).promise();
+
+        if (listResult.Contents && listResult.Contents.length > 0) {
+          // Delete objects in batches of 1000 (S3 limit)
+          const objects = listResult.Contents.map(obj => ({ Key: obj.Key! }));
+          
+          const deleteParams: AWS.S3.DeleteObjectsRequest = {
+            Bucket: this.bucket,
+            Delete: {
+              Objects: objects,
+            },
+          };
+
+          const deleteResult = await this.s3.deleteObjects(deleteParams).promise();
+          totalDeleted += deleteResult.Deleted?.length || 0;
+
+          Logger.info(`[S3] Deleted ${deleteResult.Deleted?.length || 0} files (total: ${totalDeleted})`);
+        }
+
+        continuationToken = listResult.NextContinuationToken;
+      } while (continuationToken);
+
+      Logger.info(`[S3] Bucket cleanup complete: ${totalDeleted} files deleted`);
+    } catch (error: any) {
+      Logger.error(`[S3] Failed to clean bucket`, { error: error.message });
+      throw error;
+    }
+  }
 }
 

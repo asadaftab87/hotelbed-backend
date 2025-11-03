@@ -78,7 +78,7 @@ export class HotelBedFileRepository {
           } else {
             Logger.info(`[DOWNLOAD] Progress: ${downloadedMB.toFixed(2)} MB downloaded - Speed: ${speedMBps.toFixed(2)} MB/s`);
           }
-          
+
           lastLoggedMB = Math.floor(downloadedMB / logInterval) * logInterval;
         }
       });
@@ -230,6 +230,138 @@ export class HotelBedFileRepository {
   // ============================================
 
   /**
+   * Clean everything: downloads folder, database, and S3
+   */
+  async cleanEverything(): Promise<void> {
+    console.log('\n' + '='.repeat(80));
+    console.log('🧹 CLEANING: Downloads → Database → S3');
+    console.log('='.repeat(80));
+
+    // Step 1: Clean downloads folder
+    console.log('\n📁 Step 1/3: Cleaning downloads folder...');
+    try {
+      if (fs.existsSync(this.downloadsDir)) {
+        fs.rmSync(this.downloadsDir, { recursive: true, force: true });
+        fs.mkdirSync(this.downloadsDir, { recursive: true });
+        console.log('   ✅ Downloads folder cleaned');
+      } else {
+        fs.mkdirSync(this.downloadsDir, { recursive: true });
+        console.log('   ✅ Downloads folder created');
+      }
+    } catch (error: any) {
+      console.error('   ❌ Failed to clean downloads folder:', error.message);
+      throw error;
+    }
+
+    // Step 2: Clean database
+    console.log('\n🗄️  Step 2/3: Cleaning database...');
+    try {
+      await this.cleanDatabase();
+      console.log('   ✅ Database cleaned');
+    } catch (error: any) {
+      console.error('   ❌ Failed to clean database:', error.message);
+      throw error;
+    }
+
+    // Step 3: Clean S3 bucket
+    console.log('\n☁️  Step 3/3: Cleaning S3 bucket...');
+    try {
+      await this.s3Uploader.cleanBucket();
+      console.log('   ✅ S3 bucket cleaned');
+    } catch (error: any) {
+      console.error('   ❌ Failed to clean S3 bucket:', error.message);
+      // Don't throw - S3 cleanup failure shouldn't stop the process
+      console.log('   ⚠️  Continuing despite S3 cleanup error...');
+    }
+
+    console.log('\n' + '='.repeat(80));
+    console.log('✅ CLEANUP COMPLETE!');
+    console.log('='.repeat(80) + '\n');
+  }
+
+  /**
+   * Clean database - truncate all tables
+   */
+  private async cleanDatabase(): Promise<void> {
+    const connection = await pool.getConnection();
+
+    try {
+      // Disable foreign key checks
+      await connection.query('SET FOREIGN_KEY_CHECKS = 0');
+      await connection.query('SET UNIQUE_CHECKS = 0');
+
+      const tables = [
+        // Hotel detail tables first (foreign keys)
+        'hotel_tax_info',
+        'hotel_pricing_rules',
+        'hotel_room_features',
+        'hotel_special_conditions',
+        'hotel_cancellation_policies',
+        'hotel_groups',
+        'hotel_special_requests',
+        'hotel_promotions',
+        'hotel_configurations',
+        'hotel_rate_tags',
+        'hotel_email_settings',
+        'hotel_occupancy_rules',
+        'hotel_supplements',
+        'hotel_rates',
+        'hotel_inventory',
+        'hotel_room_allocations',
+        'hotel_contracts',
+        // Core tables
+        'hotels',
+        'destinations',
+        'chains',
+        'categories',
+        'api_metadata',
+        'cheapest_pp',
+        'search_index',
+        // System tables
+        'import_logs',
+        'processing_queue',
+      ];
+
+      // Truncate all tables in parallel
+      const truncatePromises = tables.map(async (table) => {
+        try {
+          await connection.query(`TRUNCATE TABLE \`${table}\``);
+          return { table, success: true };
+    } catch (error: any) {
+          // If TRUNCATE fails, try DELETE
+          try {
+            await connection.query(`DELETE FROM \`${table}\``);
+            return { table, success: true, method: 'DELETE' };
+          } catch (deleteError: any) {
+            return { table, success: false, error: deleteError.message };
+          }
+        }
+      });
+
+      const results = await Promise.allSettled(truncatePromises);
+      
+      const successCount = results.filter(r => r.status === 'fulfilled' && (r.value as any).success).length;
+      const failCount = results.length - successCount;
+
+      if (failCount > 0) {
+        console.log(`   ⚠️  ${successCount}/${tables.length} tables cleaned, ${failCount} failed`);
+      } else {
+        console.log(`   ✅ All ${tables.length} tables cleaned`);
+      }
+
+      // Re-enable settings
+      await connection.query('SET FOREIGN_KEY_CHECKS = 1');
+      await connection.query('SET UNIQUE_CHECKS = 1');
+    } catch (error: any) {
+      await connection.query('SET FOREIGN_KEY_CHECKS = 1');
+      await connection.query('SET UNIQUE_CHECKS = 1');
+      throw error;
+    } finally {
+      connection.release();
+    }
+  }
+
+  /**
    * MAIN METHOD: Generate CSVs, Upload to S3, Load to Aurora
    */
   async importToDatabase(extractedPath: string): Promise<any> {
@@ -330,13 +462,13 @@ export class HotelBedFileRepository {
     const allFiles: Array<{ filePath: string; hotelId: number }> = [];
     
     for (const destFolder of destFolders) {
-      const destPath = path.join(destinationsDir, destFolder);
-      const hotelFiles = fs.readdirSync(destPath).filter(f => {
-        return fs.lstatSync(path.join(destPath, f)).isFile();
-      });
+            const destPath = path.join(destinationsDir, destFolder);
+            const hotelFiles = fs.readdirSync(destPath).filter(f => {
+              return fs.lstatSync(path.join(destPath, f)).isFile();
+            });
 
       for (const hotelFile of hotelFiles) {
-        const filePath = path.join(destPath, hotelFile);
+                  const filePath = path.join(destPath, hotelFile);
         const hotelId = this.csvGenerator.extractHotelIdFromFilename(hotelFile);
         
         if (hotelId) {
@@ -444,6 +576,26 @@ export class HotelBedFileRepository {
     const connection = await pool.getConnection();
 
     try {
+      console.log('   🔍 Checking S3 integration...');
+      
+      // Check if S3 integration is enabled
+      try {
+        const [s3Check]: any = await connection.query('SELECT * FROM mysql.aws_s3_integration LIMIT 1');
+        if (s3Check.length === 0) {
+          console.log('   ⚠️  WARNING: S3 integration not enabled!');
+          console.log('   Run: npm run enable-s3');
+          console.log('   Or check IAM role is attached to Aurora cluster');
+        } else {
+          console.log('   ✅ S3 integration enabled');
+        }
+      } catch (s3CheckError: any) {
+        if (s3CheckError.message && s3CheckError.message.includes("doesn't exist")) {
+          console.log('   ⚠️  WARNING: S3 integration table not found!');
+          console.log('   This might mean S3 integration is not set up');
+          console.log('   Run: npm run enable-s3');
+        }
+      }
+      
       console.log('   🔧 Optimizing database settings...');
       
       // Optimize for bulk load
@@ -492,21 +644,37 @@ export class HotelBedFileRepository {
             IGNORE 1 ROWS
           `;
 
-          const [result] = await connection.query(query);
+          console.log(`   🔍 Executing LOAD DATA FROM S3: ${s3Url}`);
+          const [result]: any = await connection.query(query);
           const duration = ((Date.now() - tableStart) / 1000).toFixed(2);
           
-          console.log(`   ✅ ${table.name} loaded in ${duration}s`);
+          // Get actual rows affected
+          const rowsAffected = result.affectedRows || 'unknown';
+          console.log(`   ✅ ${table.name} loaded in ${duration}s (Rows: ${rowsAffected})`);
           
           results[table.name] = {
             success: true,
             duration: `${duration}s`,
+            rowsAffected: rowsAffected,
           };
         } catch (error: any) {
-          console.log(`   ❌ ${table.name} failed: ${error.message}`);
+          console.error(`   ❌ ${table.name} failed:`, error.message);
+          console.error(`   S3 URL: ${s3Url}`);
+          console.error(`   Full error:`, error);
+          
+          // Check if it's S3 integration error
+          if (error.message.includes('S3') || error.message.includes('s3') || error.message.includes('Access denied')) {
+            console.error(`   ⚠️  S3 Integration Issue: Make sure IAM role is attached and procedure is enabled`);
+            console.error(`   Run: npm run enable-s3`);
+          }
+          
           results[table.name] = {
             success: false,
             error: error.message,
+            s3Url: s3Url,
           };
+          
+          // Don't stop on single table error, continue with others
         }
       }
 

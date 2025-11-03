@@ -62,8 +62,13 @@ export class HotelBedFileService {
     try {
       Logger.info('[SERVICE] 🚀 Starting HotelBeds cache download with NEW import process');
 
+      // Step 0: Clean everything first
+      Logger.info('[SERVICE] Step 0/4: Cleaning downloads folder, database, and S3...');
+      await this.repository.cleanEverything();
+      Logger.info('[SERVICE] Cleanup completed');
+
       // Step 1: Download
-      Logger.info('[SERVICE] Step 1/3: Downloading cache file');
+      Logger.info('[SERVICE] Step 1/4: Downloading cache file');
       const downloadResult = await this.repository.downloadCacheZip();
       Logger.info('[SERVICE] Download completed', {
         fileName: downloadResult.fileName,
@@ -72,7 +77,7 @@ export class HotelBedFileService {
       });
 
       // Step 2: Extract
-      Logger.info('[SERVICE] Step 2/3: Extracting cache file');
+      Logger.info('[SERVICE] Step 2/4: Extracting cache file');
       const extractResult = await this.repository.extractZipFile(downloadResult.filePath);
       Logger.info('[SERVICE] Extraction completed', {
         totalFiles: extractResult.totalFiles,
@@ -80,7 +85,7 @@ export class HotelBedFileService {
       });
 
       // Step 3: NEW Import (CSV → S3 → Aurora)
-      Logger.info('[SERVICE] Step 3/3: Importing data using NEW approach (CSV → S3 → Aurora)');
+      Logger.info('[SERVICE] Step 3/4: Importing data using NEW approach (CSV → S3 → Aurora)');
       const importResult = await this.repository.importToDatabase(extractResult.extractedPath);
       Logger.info('[SERVICE] Database import completed', {
         totalRecords: importResult.totalRecords,
