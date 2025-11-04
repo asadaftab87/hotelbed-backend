@@ -392,6 +392,51 @@ export class HotelBedFileRepository {
       console.log(`✅ Database load complete`);
       console.log(`   Duration: ${loadResult.duration}`);
 
+      // Step 4: Compute cheapest prices immediately after import
+      console.log('\n💰 STEP 4: Computing cheapest prices with hotel details...');
+      const priceStart = Date.now();
+      
+      const connection = await pool.getConnection();
+      try {
+        await connection.query('TRUNCATE TABLE cheapest_pp');
+
+        await connection.query(`
+          INSERT INTO cheapest_pp 
+          (hotel_id, hotel_name, destination_code, country_code, hotel_category, 
+           category_tag, start_date, nights, board_code, room_code, 
+           price_pp, total_price, currency, has_promotion)
+          SELECT 
+            h.id, h.name, h.destination_code, h.country_code, h.category,
+            'CITY_TRIP', MIN(r.date_from), 2, 'RO', 'STD',
+            ROUND(MIN(r.price) * 2 / 2, 2), ROUND(MIN(r.price) * 2, 2), 'EUR', 0
+          FROM hotel_rates r
+          JOIN hotels h ON r.hotel_id = h.id
+          WHERE r.price > 0
+          GROUP BY h.id, h.name, h.destination_code, h.country_code, h.category
+        `);
+
+        await connection.query(`
+          INSERT INTO cheapest_pp 
+          (hotel_id, hotel_name, destination_code, country_code, hotel_category,
+           category_tag, start_date, nights, board_code, room_code, 
+           price_pp, total_price, currency, has_promotion)
+          SELECT 
+            h.id, h.name, h.destination_code, h.country_code, h.category,
+            'OTHER', MIN(r.date_from), 5, 'RO', 'STD',
+            ROUND(MIN(r.price) * 5 / 2, 2), ROUND(MIN(r.price) * 5, 2), 'EUR', 0
+          FROM hotel_rates r
+          JOIN hotels h ON r.hotel_id = h.id
+          WHERE r.price > 0
+          GROUP BY h.id, h.name, h.destination_code, h.country_code, h.category
+        `);
+
+        const [priceResult]: any = await connection.query('SELECT COUNT(*) as count FROM cheapest_pp');
+        const priceDuration = ((Date.now() - priceStart) / 1000).toFixed(2);
+        console.log(`✅ Computed ${priceResult[0].count.toLocaleString()} cheapest prices in ${priceDuration}s`);
+      } finally {
+        connection.release();
+      }
+
       const totalDuration = ((Date.now() - startTime) / 1000 / 60).toFixed(2);
 
       console.log('\n' + '='.repeat(80));
