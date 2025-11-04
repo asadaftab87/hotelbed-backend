@@ -1,21 +1,4 @@
--- Note: hotel_contracts imported as-is from CSV
--- Columns not in CSV (payment_type, market, is_active) remain NULL
-
--- Import destinations from IDES_F
-LOAD DATA LOCAL INFILE '/tmp/destinations.csv'
-REPLACE INTO TABLE destinations
-FIELDS TERMINATED BY ':'
-LINES TERMINATED BY '\n'
-(code, country_code, is_available);
-
--- Import categories from GCAT_F  
-LOAD DATA LOCAL INFILE '/tmp/categories.csv'
-REPLACE INTO TABLE categories
-FIELDS TERMINATED BY ':'
-LINES TERMINATED BY '\n'
-(code, @dummy, simple_code);
-
--- Compute cheapest prices with hotel details
+-- Compute cheapest prices with hotel details including hotel_name
 INSERT INTO cheapest_pp 
 (hotel_id, hotel_name, destination_code, country_code, hotel_category, latitude, longitude, 
  category_tag, start_date, end_date, nights, board_code, room_code, price_pp, total_price, currency, has_promotion)
@@ -53,4 +36,4 @@ ON DUPLICATE KEY UPDATE
   end_date = VALUES(end_date),
   derived_at = NOW();
 
-SELECT 'Fixed!' as status;
+SELECT 'Cheapest prices computed with hotel names!' as status;

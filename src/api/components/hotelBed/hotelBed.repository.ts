@@ -473,6 +473,13 @@ export class HotelBedFileRepository {
     }
     fs.mkdirSync(this.csvDir, { recursive: true });
 
+    // Process GENERAL folder files FIRST (GHOT_F, IDES_F, GCAT_F)
+    const generalPath = path.join(extractedPath, 'GENERAL');
+    if (fs.existsSync(generalPath)) {
+      const { GeneralFilesParser } = await import('@/utils/generalFilesParser');
+      await GeneralFilesParser.processGeneralFiles(generalPath, this.csvDir);
+    }
+
     // Find DESTINATIONS folder
     const destinationsDir = path.join(extractedPath, 'DESTINATIONS');
     if (!fs.existsSync(destinationsDir)) {
@@ -668,6 +675,11 @@ export class HotelBedFileRepository {
       await connection.query('SET SESSION net_write_timeout = 3600'); // 1 hour
 
       const tables = [
+        // Core master data FIRST
+        { name: 'hotels', csv: 'hotels.csv' },
+        { name: 'destinations', csv: 'destinations.csv' },
+        { name: 'categories', csv: 'categories.csv' },
+        // Hotel detail data
         { name: 'hotel_contracts', csv: 'hotel_contracts.csv' },
         { name: 'hotel_room_allocations', csv: 'hotel_room_allocations.csv' },
         { name: 'hotel_inventory', csv: 'hotel_inventory.csv' },
@@ -704,6 +716,9 @@ export class HotelBedFileRepository {
 
           // Column mappings for each table
           const columnMappings: Record<string, string> = {
+            hotels: '(id,category,destination_code,chain_code,accommodation_type,ranking,group_hotel,country_code,state_code,longitude,latitude,name)',
+            destinations: '(code,country_code,is_available)',
+            categories: '(code,simple_code)',
             hotel_contracts: '(hotel_id,destination_code,contract_code,rate_code,board_code,contract_type,date_from,date_to,currency,board_type)',
             hotel_room_allocations: '(hotel_id,room_code,board_code,min_adults,max_adults,min_children,max_children,min_pax,max_pax,allocation)',
             hotel_inventory: '(hotel_id,room_code,board_code,date_from,date_to,availability_data)',
