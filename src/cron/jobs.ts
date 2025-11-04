@@ -95,33 +95,33 @@ export const fullSyncJob = cron.schedule(
       // Compute CITY_TRIP (2 nights)
       await connection.query(`
         INSERT INTO cheapest_pp 
-        (hotel_id, hotel_name, destination_code, country_code, hotel_category, 
-         category_tag, start_date, nights, board_code, room_code, 
+        (hotel_id, hotel_name, destination_code, country_code, hotel_category, latitude, longitude,
+         category_tag, start_date, end_date, nights, board_code, room_code, 
          price_pp, total_price, currency, has_promotion)
         SELECT 
-          h.id, h.name, h.destination_code, h.country_code, h.category,
-          'CITY_TRIP', MIN(r.date_from), 2, 'RO', 'STD',
+          h.id, h.name, h.destination_code, h.country_code, h.category, h.latitude, h.longitude,
+          'CITY_TRIP', MIN(r.date_from), DATE_ADD(MIN(r.date_from), INTERVAL 2 DAY), 2, 'RO', 'STD',
           ROUND(MIN(r.price) * 2 / 2, 2), ROUND(MIN(r.price) * 2, 2), 'EUR', 0
         FROM hotel_rates r
         JOIN hotels h ON r.hotel_id = h.id
         WHERE r.price > 0
-        GROUP BY h.id, h.name, h.destination_code, h.country_code, h.category
+        GROUP BY h.id, h.name, h.destination_code, h.country_code, h.category, h.latitude, h.longitude
       `);
 
       // Compute OTHER (5 nights)
       await connection.query(`
         INSERT INTO cheapest_pp 
-        (hotel_id, hotel_name, destination_code, country_code, hotel_category,
-         category_tag, start_date, nights, board_code, room_code, 
+        (hotel_id, hotel_name, destination_code, country_code, hotel_category, latitude, longitude,
+         category_tag, start_date, end_date, nights, board_code, room_code, 
          price_pp, total_price, currency, has_promotion)
         SELECT 
-          h.id, h.name, h.destination_code, h.country_code, h.category,
-          'OTHER', MIN(r.date_from), 5, 'RO', 'STD',
+          h.id, h.name, h.destination_code, h.country_code, h.category, h.latitude, h.longitude,
+          'OTHER', MIN(r.date_from), DATE_ADD(MIN(r.date_from), INTERVAL 5 DAY), 5, 'RO', 'STD',
           ROUND(MIN(r.price) * 5 / 2, 2), ROUND(MIN(r.price) * 5, 2), 'EUR', 0
         FROM hotel_rates r
         JOIN hotels h ON r.hotel_id = h.id
         WHERE r.price > 0
-        GROUP BY h.id, h.name, h.destination_code, h.country_code, h.category
+        GROUP BY h.id, h.name, h.destination_code, h.country_code, h.category, h.latitude, h.longitude
       `);
 
       const [result]: any = await connection.query('SELECT COUNT(*) as count FROM cheapest_pp');
