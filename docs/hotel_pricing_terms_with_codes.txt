@@ -1,0 +1,64 @@
+Vroegboekkorting: korting als je ver van tevoren boekt.
+Early Booking Discount: discount when booking well in advance.
+Turbo vroegboekkorting: extra ruime vroegboekkorting of met strengere voorwaarden.
+Turbo Early Booking Discount: additional discount or stricter conditions when booking very early.
+Last minute korting: korting bij boeking kort voor de verblijfsdatum.
+Last Minute Discount: discount for booking close to the stay date.
+Lang verblijf korting: korting bij een verblijf boven een bepaalde lengte.
+Long Stay Discount: discount for stays longer than a specified duration.
+Minimum verblijf: verplicht minimum aantal nachten voor dit tarief.
+Minimum Stay: mandatory minimum number of nights required for this rate.
+Vast verblijf: vaste verblijfsduur vereist voor de aanbieding of het tarief.
+Fixed Stay: fixed length of stay required for the offer or rate.
+Aankomstdagrestrictie: tarief of toeslag afhankelijk van de dag van aankomst.
+Arrival Day Restriction: rate or surcharge depending on the day of arrival.
+Operationele dagenrestrictie: geldig alleen op bepaalde dagen van de week.
+Operation Days Restriction: valid only on specific days of the week.
+Algemene toeslag of korting: zonder bijzondere aanvullende voorwaarden.
+General Supplement or Discount: applied without specific conditions.
+Maaltijdtoeslag of korting: extra kosten of korting afhankelijk van het maaltijdplan.
+Board Supplement or Discount: extra cost or discount depending on the meal plan.
+Extra’s en toeslagen: extra bed, babybed, vroege check-in, late check-out, minibar of internet.
+Extras and Supplements: extra bed, baby cot, early check-in, late check-out, minibar or internet.
+Resort fee of facility fee: verplicht bedrag voor gebruik van faciliteiten zoals zwembad, wifi of
+fitness.
+Resort fee or facility fee: mandatory charge for facilities such as pool, wifi or gym.
+Administratiekosten: toeslagen voor boekingsafhandeling of administratie.
+Handling Fees: surcharges for booking handling or administration.
+Minimum en maximum verblijf: voorwaarden die bepalen hoeveel nachten verplicht of toegestaan
+zijn.
+Minimum and Maximum Stay: conditions defining minimum or maximum nights required.
+Check-in en check-out voorwaarden: beperkingen op toegestane dagen of tijdstippen.
+Check-in and Check-out Restrictions: limitations on allowed days or times.
+Gratis nachten promotie: extra overnachting gratis bij verblijf van meerdere nachten.
+Free Nights Promotion: additional free night when staying multiple nights.
+Combinatie-aanbiedingen: promoties die gecombineerd mogen worden met andere kortingen.
+Combinable Offers: promotions that can be combined with other discounts.
+Annuleringskosten: kosten die gelden bij annuleren of wijzigen van de boeking.
+Cancellation Fees: charges applied when cancelling or modifying a booking.
+Promoties: tijdelijke acties of speciale deals.
+
+
+Promotions: temporary offers or special deals.
+Tariefvarianten: speciale tarieven zoals non-refundable, member rate of corporate rate.
+Rate Variants: special rates such as non-refundable, member rate or corporate rate.
+Lidmaatschapskorting: korting voor leden van loyaliteitsprogramma’s.
+Membership Discount: discount for members of loyalty programs.
+CNSU: algemene supplementen en kortingen zoals vroegboekkorting, last minute en lang verblijf.
+CNSU: general supplements and discounts such as early booking, last minute, and long stay.
+CNSR: maaltijdtoeslagen en kortingen afhankelijk van het maaltijdplan.
+CNSR: board supplements and discounts depending on the meal plan.
+CNGR: gratis nachten promoties of frees.
+CNGR: free night promotions or frees.
+CNOE: combinatie-aanbiedingen die al dan niet met andere promoties te combineren zijn.
+CNOE: combinable offers that may or may not be combined with other promotions.
+CNPR: promoties of tijdelijke acties.
+CNPR: promotions or temporary deals.
+CNCF: annuleringskosten en annuleringsvoorwaarden.
+CNCF: cancellation fees and cancellation policies.
+CNHA: kamerbeschikbaarheid en voorwaarden zoals minimum en maximum bezetting.
+CNHA: room availability and conditions such as minimum and maximum occupancy.
+CNEM: minimum- en maximumverblijfsrestricties.
+CNEM: minimum and maximum stay restrictions.
+
+

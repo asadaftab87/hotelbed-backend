@@ -379,9 +379,15 @@ export class HotelBedFileRepository {
       console.log(`✅ CSV generation complete: ${csvResult.totalFiles} files processed`);
       console.log(`   Total records: ${csvResult.totalRecords.toLocaleString()}`);
       console.log(`   Duration: ${csvResult.duration}`);
+      Logger.info('[IMPORT] CSV files constructed successfully', {
+        totalFiles: csvResult.totalFiles,
+        totalRecords: csvResult.totalRecords,
+        duration: csvResult.duration
+      });
 
       // Step 2: Upload to S3
       console.log('\n☁️  STEP 2/3: Uploading CSV files to S3...');
+      Logger.info('[IMPORT] Starting S3 upload...');
       const s3Result = await this.uploadCSVsToS3();
       console.log(`✅ S3 upload complete: ${Object.keys(s3Result.locations).length} files uploaded`);
       console.log(`   Duration: ${s3Result.duration}`);
@@ -392,8 +398,65 @@ export class HotelBedFileRepository {
       console.log(`✅ Database load complete`);
       console.log(`   Duration: ${loadResult.duration}`);
 
-      // Step 4: Compute cheapest prices immediately after import
-      console.log('\n💰 STEP 4: Computing cheapest prices with hotel details...');
+      // Step 4: Fetch hotel names from Content API
+      console.log('\n🏨 STEP 4: Fetching hotel names from Content API...');
+      const nameStart = Date.now();
+      try {
+        const [placeholders]: any = await pool.query(
+          'SELECT id FROM hotels WHERE name LIKE "Property %" ORDER BY id'
+        );
+        
+        if (placeholders.length > 0) {
+          console.log(`   Found ${placeholders.length} hotels with placeholder names`);
+          let updated = 0;
+          
+          // Batch fetch in groups of 1000 (Content API limit)
+          for (let i = 0; i < placeholders.length; i += 1000) {
+            const batch = placeholders.slice(i, i + 1000);
+            const codes = batch.map((h: any) => h.id).join(',');
+            
+            try {
+              const response = await axios.get(
+                'https://api.hotelbeds.com/hotel-content-api/1.0/hotels',
+                {
+                  params: { codes, fields: 'name', language: 'ENG' },
+                  headers: {
+                    'Api-key': env.HOTELBEDS_API_KEY,
+                    'Accept': 'application/json'
+                  },
+                  timeout: 30000
+                }
+              );
+              
+              const hotels = response.data?.hotels || [];
+              for (const hotel of hotels) {
+                if (hotel.code && hotel.name?.content) {
+                  await pool.query(
+                    'UPDATE hotels SET name = ? WHERE id = ?',
+                    [hotel.name.content, hotel.code]
+                  );
+                  updated++;
+                }
+              }
+              
+              console.log(`   Progress: ${updated}/${placeholders.length}`);
+            } catch (error: any) {
+              console.log(`   ⚠️  Batch ${i}-${i + 1000} failed: ${error.message}`);
+            }
+          }
+          
+          const nameDuration = ((Date.now() - nameStart) / 1000).toFixed(2);
+          console.log(`✅ Updated ${updated} hotel names in ${nameDuration}s`);
+        } else {
+          console.log('   ✅ No placeholder names found');
+        }
+      } catch (error: any) {
+        console.log(`⚠️  Name fetch failed: ${error.message}`);
+        console.log('   Continuing with placeholder names...');
+      }
+
+      // Step 5: Compute cheapest prices immediately after import
+      console.log('\n💰 STEP 5: Computing cheapest prices with hotel details...');
       const priceStart = Date.now();
       
       const connection = await pool.getConnection();
@@ -669,10 +732,13 @@ export class HotelBedFileRepository {
       await connection.query('SET FOREIGN_KEY_CHECKS = 0');
       await connection.query('SET UNIQUE_CHECKS = 0');
       await connection.query('SET AUTOCOMMIT = 0');
-      await connection.query('SET SESSION wait_timeout = 28800'); // 8 hours
-      await connection.query('SET SESSION interactive_timeout = 28800'); // 8 hours
-      await connection.query('SET SESSION net_read_timeout = 3600'); // 1 hour
-      await connection.query('SET SESSION net_write_timeout = 3600'); // 1 hour
+      await connection.query('SET SESSION wait_timeout = 86400');
+      await connection.query('SET SESSION interactive_timeout = 86400');
+      await connection.query('SET SESSION net_read_timeout = 86400');
+      await connection.query('SET SESSION net_write_timeout = 86400');
+      await connection.query('SET SESSION max_execution_time = 0');
+      
+      console.log('   ✅ Database settings optimized');
 
       const tables = [
         // Core master data FIRST
@@ -706,12 +772,23 @@ export class HotelBedFileRepository {
         console.log(`   Loading ${table.name}...`);
 
         try {
-          // Use LOAD DATA LOCAL INFILE instead of S3 (works without IAM role)
           const csvPath = path.join(this.csvDir, table.csv);
           
           if (!fs.existsSync(csvPath)) {
             console.log(`   ⏭️  Skipping ${table.name} (no CSV file)`);
             continue;
+          }
+          
+          // Get fresh connection for each table to avoid timeout
+          let tableConnection;
+          try {
+            tableConnection = await pool.getConnection();
+            await tableConnection.query('SET SESSION wait_timeout = 86400');
+            await tableConnection.query('SET SESSION net_read_timeout = 86400');
+            await tableConnection.query('SET SESSION net_write_timeout = 86400');
+          } catch (connError: any) {
+            console.log(`   ⚠️  Connection error for ${table.name}: ${connError.message}`);
+            throw connError;
           }
 
           // Column mappings for each table
@@ -747,9 +824,11 @@ export class HotelBedFileRepository {
             ${columns}
           `;
 
-          const [result]: any = await connection.query(query);
+          const [result]: any = await tableConnection.query(query);
           const duration = ((Date.now() - tableStart) / 1000).toFixed(2);
           const rowsAffected = result.affectedRows || 0;
+          
+          tableConnection.release();
           
           console.log(`   ✅ ${table.name} loaded in ${duration}s (Rows: ${rowsAffected.toLocaleString()})`);
           
@@ -793,10 +872,12 @@ export class HotelBedFileRepository {
       }
       throw error;
     } finally {
-      try {
-        connection.release();
-      } catch (releaseError) {
-        console.log('Connection release failed (already released)');
+      if (connection) {
+        try {
+          connection.release();
+        } catch (releaseError) {
+          console.log('Connection release failed (already released)');
+        }
       }
     }
   }

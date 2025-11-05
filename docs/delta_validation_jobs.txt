@@ -1,0 +1,32 @@
+Delta Collection & Validation Jobs in Hotelbeds
+ Cache API Integration
+ 
+What is a Delta Collection Job?
+A Delta Collection Job is designed to capture only the changes (the 'delta') since the last update,
+instead of reprocessing all data every time. This makes the cache refresh process more efficient
+and reduces API load.
+What Does It Collect?
+The delta job typically gathers: - Newly added hotels - Updated rates or availability - Changes in
+promotions, campaigns, or booking policies - Stop-sale flags or allotment adjustments
+Why Use Delta Jobs?
+By focusing only on modifications, delta collection jobs minimize data transfer and processing. They
+help maintain an up-to-date cache without the overhead of a full refresh.
+What is a Validation Job?
+A Validation Job ensures the accuracy and reliability of cached data by comparing it against live
+API responses. It runs either periodically or on a sampling basis to detect discrepancies.
+How Does Validation Work?
+1. Select sample hotels, dates, and occupancies. 2. Fetch live data from the Hotelbeds Booking
+API. 3. Compare with cached data. 4. If deviations exceed an acceptable threshold (e.g., 2–3%),
+mark the cache entry invalid and refresh it.
+Why Use Validation Jobs?
+Validation jobs prevent stale or incorrect prices from being displayed to users. They ensure the
+cache hit-rate remains high while keeping deviation within business-acceptable limits.
+How They Work Together
+Delta jobs keep the cache continuously updated with the latest changes. Validation jobs add a
+quality control layer by checking cached values against the live API. Together, they deliver both
+performance (fast results from cache) and accuracy (trustworthy prices and availability).
+Benefits
+Implementing both delta collection and validation jobs provides: - Efficient cache refresh cycles -
+Reduced API costs and load - Higher cache hit-rates (>70%) - Reliable, accurate end-user prices
+
+

@@ -1,0 +1,66 @@
+Hotelbeds Cache API Integration: Key Jobs &
+ Pipelines
+ 
+Precompute Job for E.P.P Prices
+The precompute job calculates the End-user Payable Price (E.P.P) in advance and stores it in
+cache. This ensures search results display fast and accurate final prices without relying on live API
+calls.
+Precompute Job voor E.P.P Prijzen
+De precompute job berekent de End-user Payable Price (E.P.P) vooraf en slaat deze op in de
+cache. Zo worden zoekresultaten snel en correct getoond zonder afhankelijk te zijn van live
+API-aanroepen.
+Key Steps (English)
+1. Define scope (dates, LOS, occupancies). 2. Retrieve raw data (rates, promotions, policies). 3.
+Normalize and check eligibility. 4. Apply promotions using the combinability matrix. 5. Add fees and
+taxes. 6. Convert currency and round. 7. Aggregate cheapest options and generate badges. 8.
+Store compact results in cache. 9. Monitor hit-rates and deviations. 10. Validate with live API if
+needed.
+Belangrijkste Stappen (Nederlands)
+1. Scope bepalen (data, LOS, bezettingen). 2. Ruwe data ophalen (tarieven, promoties, policies). 3.
+Normaliseren en toepasbaarheid controleren. 4. Promoties toepassen volgens combinatiematrix. 5.
+Toeslagen en belastingen toevoegen. 6. Valuta omrekenen en afronden. 7. Goedkoopste opties
+selecteren en badges genereren. 8. Resultaten compact opslaan in cache. 9. Cache-hit rates en
+afwijkingen monitoren. 10. Valideren met live API indien nodig.
+Delta Collection Jobs
+Delta jobs collect only changes since the last update (new hotels, updated rates, stop-sales, policy
+changes). They save processing time and reduce API load.
+Delta Collection Jobs
+Delta jobs verzamelen enkel de wijzigingen sinds de laatste update (nieuwe hotels, aangepaste
+tarieven, stop-sales, policy-wijzigingen). Dit bespaart verwerkingstijd en vermindert API-belasting.
+Validation Jobs
+Validation jobs check cache accuracy against live API. Sampled data is compared, and if deviation
+exceeds thresholds, the cache entry is invalidated and refreshed.
+Validation Jobs
+
+
+Validation jobs controleren de juistheid van de cache tegen de live API. Steekproeven worden
+vergeleken, en als de afwijking boven de drempel ligt, wordt de cache-entry ongeldig gemaakt en
+vernieuwd.
+Combined Benefit
+Delta jobs keep the cache up to date efficiently. Validation jobs ensure trust and accuracy. Together
+they provide fast, reliable results.
+Gecombineerd Voordeel
+Delta jobs houden de cache efficiënt up-to-date. Validation jobs zorgen voor betrouwbaarheid en
+nauwkeurigheid. Samen leveren ze snelle en betrouwbare resultaten.
+Pipelines for Price
+Price pipelines are structured sequences of steps that transform raw data (net rates, promotions,
+fees, taxes, FX) into final E.P.P prices. They ensure correctness, consistency, and scalability.
+Pipelines voor Prijs
+Price pipelines zijn gestructureerde stappen die ruwe data (nettotarieven, promoties, toeslagen,
+belastingen, FX) omzetten naar de uiteindelijke E.P.P-prijzen. Ze zorgen voor correctheid,
+consistentie en schaalbaarheid.
+Pipeline Steps (English)
+1. Ingest data. 2. Normalize and validate eligibility. 3. Apply promotions. 4. Add fees and taxes. 5.
+Currency conversion and rounding. 6. Aggregate cheapest options. 7. Store and index results.
+Pipeline Stappen (Nederlands)
+1. Data ophalen. 2. Normaliseren en toepasbaarheid controleren. 3. Promoties toepassen. 4.
+Toeslagen en belastingen toevoegen. 5. Valuta omrekenen en afronden. 6. Goedkoopste opties
+aggregeren. 7. Resultaten opslaan en indexeren.
+Benefits
+- Modular, reusable, and traceable. - Works for precompute, delta, and fallback. - Ensures accurate
+end-user prices with scalability.
+Voordelen
+- Modulair, herbruikbaar en traceerbaar. - Werkt voor precompute, delta en fallback. - Zorgt voor
+correcte eindprijzen met schaalbaarheid.
+
+

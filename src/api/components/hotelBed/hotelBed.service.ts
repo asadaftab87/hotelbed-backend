@@ -19,6 +19,10 @@ export class HotelBedFileService {
     try {
       Logger.info('[SERVICE] 🚀 Starting NEW import process (CSV → S3 → Aurora)');
 
+      if (folderName) {
+        Logger.info('[SERVICE] Manual folder import requested', { folderName });
+      }
+
       const extractedPath = await this.repository.findExtractedFolder(folderName);
 
       Logger.info('[SERVICE] Found extracted folder', { path: extractedPath });
@@ -31,11 +35,29 @@ export class HotelBedFileService {
         duration: importResult.totalDuration
       });
 
+      // Auto-trigger compute prices after manual import
+      if (folderName) {
+        Logger.info('[SERVICE] Auto-triggering compute prices after manual import');
+        const priceResult = await this.computeCheapestPrices('ALL');
+        Logger.info('[SERVICE] Compute prices completed', {
+          processed: priceResult.processed,
+          computed: priceResult.computed
+        });
+      }
+
       const totalDuration = ((Date.now() - serviceStartTime) / 1000 / 60).toFixed(2);
 
-      Logger.info('[SERVICE] Direct import finished successfully', {
-        totalDuration: `${totalDuration} minutes`
-      });
+      if (folderName) {
+        Logger.info('[SERVICE] Manual folder import finished successfully', {
+          folderName,
+          extractedPath,
+          totalDuration: `${totalDuration} minutes`
+        });
+      } else {
+        Logger.info('[SERVICE] Direct import finished successfully', {
+          totalDuration: `${totalDuration} minutes`
+        });
+      }
 
       return {
         success: true,
@@ -414,6 +436,21 @@ export class HotelBedFileService {
       return result;
     } catch (error: any) {
       Logger.error('[SERVICE] Error getting available rooms', { error: error.message });
+      throw error;
+    }
+  }
+
+  /**
+   * Get cheapest_pp table status
+   */
+  async getCheapestStatus(): Promise<any> {
+    try {
+      Logger.info('[SERVICE] Checking cheapest_pp status');
+      const result = await this.repository.getCheapestStatus();
+      Logger.info('[SERVICE] Cheapest PP status retrieved', { count: result.count });
+      return result;
+    } catch (error: any) {
+      Logger.error('[SERVICE] Error checking cheapest_pp', { error: error.message });
       throw error;
     }
   }

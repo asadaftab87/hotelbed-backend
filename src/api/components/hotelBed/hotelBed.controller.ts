@@ -500,6 +500,24 @@ export class HotelBedFileController {
 
   /**
    * @swagger
+   * /hotelbed/cheapest-status:
+   *   get:
+   *     summary: Check cheapest_pp table status
+   *     description: Get count and sample data from cheapest_pp table
+   *     tags: [HotelBed]
+   *     responses:
+   *       200:
+   *         description: Status retrieved
+   */
+  getCheapestStatus = asyncHandler(
+    async (req: Request, res: Response, next: NextFunction): Promise<Response | void> => {
+      const result = await this.service.getCheapestStatus();
+      new SuccessResponse('Cheapest PP status', result).send(res);
+    }
+  );
+
+  /**
+   * @swagger
    * /hotelbed/check-availability:
    *   get:
    *     summary: Get all available rooms for hotel with dates and pricing
