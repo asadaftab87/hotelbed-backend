@@ -783,13 +783,21 @@ export class HotelBedFileRepository {
         duration: `${duration}s`,
       };
     } catch (error: any) {
-      await connection.query('ROLLBACK');
-      await connection.query('SET FOREIGN_KEY_CHECKS = 1');
-      await connection.query('SET UNIQUE_CHECKS = 1');
-      await connection.query('SET AUTOCOMMIT = 1');
+      try {
+        await connection.query('ROLLBACK');
+        await connection.query('SET FOREIGN_KEY_CHECKS = 1');
+        await connection.query('SET UNIQUE_CHECKS = 1');
+        await connection.query('SET AUTOCOMMIT = 1');
+      } catch (cleanupError) {
+        console.log('Connection cleanup failed (connection may be closed)');
+      }
       throw error;
     } finally {
-      connection.release();
+      try {
+        connection.release();
+      } catch (releaseError) {
+        console.log('Connection release failed (already released)');
+      }
     }
   }
 
@@ -1074,19 +1082,24 @@ export class HotelBedFileRepository {
 
         const [res]: any = await pool.query(`
           INSERT INTO cheapest_pp 
-          (hotel_id, category_tag, start_date, nights, board_code, room_code, price_pp, total_price, currency, has_promotion)
-          SELECT r.hotel_id, ?, MIN(r.date_from), ?, 'RO', 'STD',
-                 ROUND(MIN(r.price) * ? / 2, 2), ROUND(MIN(r.price) * ?, 2), 'EUR', 0
+          (hotel_id, hotel_name, destination_code, country_code, hotel_category, latitude, longitude,
+           category_tag, start_date, end_date, nights, board_code, room_code, 
+           price_pp, total_price, currency, has_promotion)
+          SELECT 
+            h.id, h.name, h.destination_code, h.country_code, h.category, h.latitude, h.longitude,
+            ?, MIN(r.date_from), DATE_ADD(MIN(r.date_from), INTERVAL ? DAY), ?, 'RO', 'STD',
+            ROUND(MIN(r.price) * ? / 2, 2), ROUND(MIN(r.price) * ?, 2), 'EUR', 0
           FROM hotel_rates r
           INNER JOIN hotels h ON h.id = r.hotel_id
           WHERE r.price > 0
           ${hotelId ? 'AND r.hotel_id = ?' : ''}
-          GROUP BY r.hotel_id
+          GROUP BY h.id, h.name, h.destination_code, h.country_code, h.category, h.latitude, h.longitude
           ON DUPLICATE KEY UPDATE 
+            hotel_name = VALUES(hotel_name),
             price_pp = VALUES(price_pp), 
             total_price = VALUES(total_price), 
             derived_at = NOW()
-        `, hotelId ? [cat, n, n, n, hotelId] : [cat, n, n, n]);
+        `, hotelId ? [cat, n, n, n, n, hotelId] : [cat, n, n, n, n]);
 
         total += res.affectedRows || 0;
         Logger.info(`✅ ${cat}: ${res.affectedRows}`);
@@ -1115,8 +1128,15 @@ export class HotelBedFileRepository {
       CREATE TABLE IF NOT EXISTS cheapest_pp (
         id INT AUTO_INCREMENT PRIMARY KEY,
         hotel_id INT NOT NULL,
+        hotel_name VARCHAR(255),
+        destination_code VARCHAR(10),
+        country_code VARCHAR(5),
+        hotel_category VARCHAR(50),
+        latitude DECIMAL(10,6),
+        longitude DECIMAL(10,6),
         category_tag VARCHAR(50),
         start_date DATE,
+        end_date DATE,
         nights INT,
         board_code VARCHAR(10),
         room_code VARCHAR(50),
@@ -1142,7 +1162,7 @@ export class HotelBedFileRepository {
       const params: any[] = [];
 
       if (filters.destination) {
-        conditions.push('h.destination_code = ?');
+        conditions.push('cp.destination_code = ?');
         params.push(filters.destination);
       }
 
@@ -1152,7 +1172,7 @@ export class HotelBedFileRepository {
       }
 
       if (filters.name) {
-        conditions.push('h.name LIKE ?');
+        conditions.push('cp.hotel_name LIKE ?');
         params.push(`%${filters.name}%`);
       }
 
@@ -1171,15 +1191,14 @@ export class HotelBedFileRepository {
       const sortMap: any = {
         price_asc: 'cp.price_pp ASC',
         price_desc: 'cp.price_pp DESC',
-        name_asc: 'h.name ASC',
-        name_desc: 'h.name DESC',
+        name_asc: 'cp.hotel_name ASC',
+        name_desc: 'cp.hotel_name DESC',
       };
       const orderBy = sortMap[sort] || 'cp.price_pp ASC';
 
       const countQuery = `
         SELECT COUNT(*) as total
         FROM cheapest_pp cp
-        INNER JOIN hotels h ON h.id = cp.hotel_id
         ${whereClause}
       `;
       const [countResult]: any = await pool.query(countQuery, params);
@@ -1188,18 +1207,21 @@ export class HotelBedFileRepository {
       const offset = (page - 1) * limit;
       const dataQuery = `
         SELECT 
-          h.id as hotelId,
-          h.name,
+          cp.hotel_id as hotelId,
+          cp.hotel_name as name,
           cp.price_pp as fromPricePP,
           cp.currency,
           cp.board_code as board,
           cp.start_date as startDate,
+          cp.end_date as endDate,
           cp.nights,
           cp.category_tag as category,
-          h.destination_code as destination,
-          h.country_code as country
+          cp.destination_code as destination,
+          cp.country_code as country,
+          cp.hotel_category as hotelCategory,
+          cp.latitude,
+          cp.longitude
         FROM cheapest_pp cp
-        INNER JOIN hotels h ON h.id = cp.hotel_id
         ${whereClause}
         ORDER BY ${orderBy}
         LIMIT ? OFFSET ?

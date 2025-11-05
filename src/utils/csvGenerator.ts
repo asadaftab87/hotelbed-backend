@@ -27,7 +27,6 @@ export class CSVGenerator {
    */
   createCSVWriters() {
     const tables = [
-      'hotels',
       'hotel_contracts',
       'hotel_room_allocations',
       'hotel_inventory',

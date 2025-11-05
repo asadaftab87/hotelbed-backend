@@ -440,8 +440,15 @@ CREATE TABLE IF NOT EXISTS `hotel_tax_info` (
 CREATE TABLE IF NOT EXISTS `cheapest_pp` (
   `id` BIGINT AUTO_INCREMENT PRIMARY KEY,
   `hotel_id` BIGINT NOT NULL,
+  `hotel_name` VARCHAR(255) COMMENT 'Hotel name from hotels table',
+  `destination_code` VARCHAR(10) COMMENT 'Destination code',
+  `country_code` VARCHAR(5) COMMENT 'Country code',
+  `hotel_category` VARCHAR(50) COMMENT 'Hotel category',
+  `latitude` DECIMAL(11, 8) COMMENT 'Hotel latitude',
+  `longitude` DECIMAL(11, 8) COMMENT 'Hotel longitude',
   `category_tag` VARCHAR(20) DEFAULT 'CITY_TRIP' COMMENT 'CITY_TRIP or OTHER',
   `start_date` DATE NOT NULL COMMENT 'Earliest bookable date',
+  `end_date` DATE COMMENT 'Check-out date',
   `nights` INT NOT NULL COMMENT 'Number of nights',
   `board_code` VARCHAR(10) COMMENT 'Board type: RO, BB, HB, FB, AI',
   `room_code` VARCHAR(50) COMMENT 'Room code',
@@ -455,6 +462,8 @@ CREATE TABLE IF NOT EXISTS `cheapest_pp` (
   INDEX `idx_category_price` (`category_tag`, `price_pp`),
   INDEX `idx_start_date` (`start_date`),
   INDEX `idx_hotel_price` (`hotel_id`, `price_pp`),
+  INDEX `idx_hotel_name` (`hotel_name`(100)),
+  INDEX `idx_destination` (`destination_code`),
   UNIQUE KEY `uk_hotel_category` (`hotel_id`, `category_tag`),
   FOREIGN KEY (`hotel_id`) REFERENCES `hotels`(`id`) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
