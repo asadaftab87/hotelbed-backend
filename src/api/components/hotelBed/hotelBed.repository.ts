@@ -1406,6 +1406,35 @@ export class HotelBedFileRepository {
    */
   async checkAvailability(hotelId: number, checkIn: string, nights: number, roomCodeFilter?: string): Promise<any> {
     try {
+      // Calculate checkout date
+      const checkInDate = new Date(checkIn);
+      const checkOutDate = new Date(checkInDate);
+      checkOutDate.setDate(checkOutDate.getDate() + nights);
+      const checkOut = checkOutDate.toISOString().split('T')[0];
+
+      // First, fetch hotel details from hotels table
+      const [hotelDetails]: any = await pool.query(
+        `
+        SELECT 
+          id,
+          name as hotel_name,
+          destination_code,
+          country_code,
+          category as hotel_category,
+          latitude,
+          longitude,
+          chain_code,
+          accommodation_type,
+          ranking,
+          state_code
+        FROM hotels
+        WHERE id = ?
+      `,
+        [hotelId]
+      );
+
+      const hotel = hotelDetails && hotelDetails.length > 0 ? hotelDetails[0] : null;
+
       const roomFilter = roomCodeFilter ? 'AND room_code = ?' : '';
       const params = roomCodeFilter ? [hotelId, checkIn, checkIn, nights, roomCodeFilter] : [hotelId, checkIn, checkIn, nights];
 
@@ -1431,7 +1460,18 @@ export class HotelBedFileRepository {
       if (!rates || rates.length === 0) {
         return {
           hotelId,
+          hotelName: hotel?.hotel_name || null,
+          countryCode: hotel?.country_code || null,
+          destinationCode: hotel?.destination_code || null,
+          hotelCategory: hotel?.hotel_category || null,
+          latitude: hotel?.latitude || null,
+          longitude: hotel?.longitude || null,
+          chainCode: hotel?.chain_code || null,
+          accommodationType: hotel?.accommodation_type || null,
+          ranking: hotel?.ranking || null,
+          stateCode: hotel?.state_code || null,
           checkIn,
+          checkOut,
           nights,
           rooms: [],
           message: 'No rooms available',
@@ -1470,7 +1510,18 @@ export class HotelBedFileRepository {
 
       return {
         hotelId,
+        hotelName: hotel?.hotel_name || null,
+        countryCode: hotel?.country_code || null,
+        destinationCode: hotel?.destination_code || null,
+        hotelCategory: hotel?.hotel_category || null,
+        latitude: hotel?.latitude ? parseFloat(hotel.latitude) : null,
+        longitude: hotel?.longitude ? parseFloat(hotel.longitude) : null,
+        chainCode: hotel?.chain_code || null,
+        accommodationType: hotel?.accommodation_type || null,
+        ranking: hotel?.ranking || null,
+        stateCode: hotel?.state_code || null,
         checkIn,
+        checkOut,
         nights,
         totalRooms: availableRooms.length,
         rooms: availableRooms,
