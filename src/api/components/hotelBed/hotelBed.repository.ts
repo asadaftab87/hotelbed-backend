@@ -479,14 +479,15 @@ export class HotelBedFileRepository {
         console.log('   Continuing with placeholder names...');
       }
 
-  // Step 5: Compute cheapest prices immediately after import
-  console.log(`\n💰 STEP ${stepCounter++}: Computing cheapest prices with hotel details...`);
+  // Step 5: Compute cheapest prices with FULL formula
+      console.log(`\n💰 STEP ${stepCounter++}: Computing with FULL formula (supplements + promotions + taxes)...`);
       const priceStart = Date.now();
       
       const connection = await pool.getConnection();
       try {
         await connection.query('TRUNCATE TABLE cheapest_pp');
 
+        // CITY_TRIP with full formula
         await connection.query(`
           INSERT INTO cheapest_pp 
           (hotel_id, hotel_name, destination_code, country_code, hotel_category, latitude, longitude,
@@ -494,14 +495,42 @@ export class HotelBedFileRepository {
            price_pp, total_price, currency, has_promotion)
           SELECT 
             h.id, h.name, h.destination_code, h.country_code, h.category, h.latitude, h.longitude,
-            'CITY_TRIP', MIN(r.date_from), DATE_ADD(MIN(r.date_from), INTERVAL 2 DAY), 2, 'RO', 'STD',
-            ROUND(MIN(r.price) * 2 / 2, 2), ROUND(MIN(r.price) * 2, 2), 'EUR', 0
+            'CITY_TRIP', MIN(r.date_from), DATE_ADD(MIN(r.date_from), INTERVAL 2 DAY), 2, 
+            r.board_code, r.room_code,
+            ROUND((
+              (r.price * 2) +
+              COALESCE(supp.discount_percent, 0) +
+              COALESCE(CAST(SUBSTRING_INDEX(SUBSTRING_INDEX(promo.promotion_data, 'discount', -1), ',', 1) AS DECIMAL(10,2)), 0) +
+              COALESCE(
+                CASE WHEN tax.per_night = 'Y' THEN tax.amount * 2 ELSE tax.amount END,
+                CASE WHEN tax.percentage > 0 THEN (r.price * 2 * tax.percentage / 100) ELSE 0 END,
+                0
+              )
+            ) / 2, 2),
+            ROUND(
+              (r.price * 2) +
+              COALESCE(supp.discount_percent, 0) +
+              COALESCE(CAST(SUBSTRING_INDEX(SUBSTRING_INDEX(promo.promotion_data, 'discount', -1), ',', 1) AS DECIMAL(10,2)), 0) +
+              COALESCE(
+                CASE WHEN tax.per_night = 'Y' THEN tax.amount * 2 ELSE tax.amount END,
+                CASE WHEN tax.percentage > 0 THEN (r.price * 2 * tax.percentage / 100) ELSE 0 END,
+                0
+              )
+            , 2),
+            'EUR',
+            CASE WHEN promo.id IS NOT NULL THEN 1 ELSE 0 END
           FROM hotel_rates r
           JOIN hotels h ON r.hotel_id = h.id
-          WHERE r.price > 0
+          LEFT JOIN hotel_supplements supp ON supp.hotel_id = r.hotel_id 
+            AND r.date_from BETWEEN supp.date_from AND supp.date_to
+          LEFT JOIN hotel_promotions promo ON promo.hotel_id = r.hotel_id
+          LEFT JOIN hotel_tax_info tax ON tax.hotel_id = r.hotel_id 
+            AND r.room_code = tax.room_code AND r.board_code = tax.board_code
+          WHERE r.price > 0 AND r.adults = 2
           GROUP BY h.id, h.name, h.destination_code, h.country_code, h.category, h.latitude, h.longitude
         `);
 
+        // OTHER with full formula
         await connection.query(`
           INSERT INTO cheapest_pp 
           (hotel_id, hotel_name, destination_code, country_code, hotel_category, latitude, longitude,
@@ -509,17 +538,44 @@ export class HotelBedFileRepository {
            price_pp, total_price, currency, has_promotion)
           SELECT 
             h.id, h.name, h.destination_code, h.country_code, h.category, h.latitude, h.longitude,
-            'OTHER', MIN(r.date_from), DATE_ADD(MIN(r.date_from), INTERVAL 5 DAY), 5, 'RO', 'STD',
-            ROUND(MIN(r.price) * 5 / 2, 2), ROUND(MIN(r.price) * 5, 2), 'EUR', 0
+            'OTHER', MIN(r.date_from), DATE_ADD(MIN(r.date_from), INTERVAL 5 DAY), 5,
+            r.board_code, r.room_code,
+            ROUND((
+              (r.price * 5) +
+              COALESCE(supp.discount_percent, 0) +
+              COALESCE(CAST(SUBSTRING_INDEX(SUBSTRING_INDEX(promo.promotion_data, 'discount', -1), ',', 1) AS DECIMAL(10,2)), 0) +
+              COALESCE(
+                CASE WHEN tax.per_night = 'Y' THEN tax.amount * 5 ELSE tax.amount END,
+                CASE WHEN tax.percentage > 0 THEN (r.price * 5 * tax.percentage / 100) ELSE 0 END,
+                0
+              )
+            ) / 2, 2),
+            ROUND(
+              (r.price * 5) +
+              COALESCE(supp.discount_percent, 0) +
+              COALESCE(CAST(SUBSTRING_INDEX(SUBSTRING_INDEX(promo.promotion_data, 'discount', -1), ',', 1) AS DECIMAL(10,2)), 0) +
+              COALESCE(
+                CASE WHEN tax.per_night = 'Y' THEN tax.amount * 5 ELSE tax.amount END,
+                CASE WHEN tax.percentage > 0 THEN (r.price * 5 * tax.percentage / 100) ELSE 0 END,
+                0
+              )
+            , 2),
+            'EUR',
+            CASE WHEN promo.id IS NOT NULL THEN 1 ELSE 0 END
           FROM hotel_rates r
           JOIN hotels h ON r.hotel_id = h.id
-          WHERE r.price > 0
+          LEFT JOIN hotel_supplements supp ON supp.hotel_id = r.hotel_id 
+            AND r.date_from BETWEEN supp.date_from AND supp.date_to
+          LEFT JOIN hotel_promotions promo ON promo.hotel_id = r.hotel_id
+          LEFT JOIN hotel_tax_info tax ON tax.hotel_id = r.hotel_id 
+            AND r.room_code = tax.room_code AND r.board_code = tax.board_code
+          WHERE r.price > 0 AND r.adults = 2
           GROUP BY h.id, h.name, h.destination_code, h.country_code, h.category, h.latitude, h.longitude
         `);
 
         const [priceResult]: any = await connection.query('SELECT COUNT(*) as count FROM cheapest_pp');
         const priceDuration = ((Date.now() - priceStart) / 1000).toFixed(2);
-        console.log(`✅ Computed ${priceResult[0].count.toLocaleString()} cheapest prices in ${priceDuration}s`);
+        console.log(`✅ Computed ${priceResult[0].count.toLocaleString()} prices with FULL formula in ${priceDuration}s`);
       } finally {
         connection.release();
       }
@@ -1163,12 +1219,12 @@ export class HotelBedFileRepository {
   }
 
   /**
-   * Compute cheapest prices per person
+   * Compute cheapest prices with FULL formula: Base + Supplements + Promotions + Taxes
    */
   async computeCheapestPrices(category: string = 'ALL', hotelId?: number): Promise<any> {
     const start = Date.now();
 
-    Logger.info('⚡ Computing cheapest prices...');
+    Logger.info('⚡ Computing with FULL formula (supplements + promotions + taxes)...');
     await this.createCheapestPPTable();
 
     const cats = category === 'ALL' ? ['CITY_TRIP', 'OTHER'] : [category];
@@ -1188,7 +1244,7 @@ export class HotelBedFileRepository {
 
       for (const cat of cats) {
         const n = cat === 'CITY_TRIP' ? 2 : 5;
-        Logger.info(`Computing ${cat}...`);
+        Logger.info(`Computing ${cat} with supplements, promotions, taxes...`);
 
         const [res]: any = await pool.query(`
           INSERT INTO cheapest_pp 
@@ -1197,19 +1253,47 @@ export class HotelBedFileRepository {
            price_pp, total_price, currency, has_promotion)
           SELECT 
             h.id, h.name, h.destination_code, h.country_code, h.category, h.latitude, h.longitude,
-            ?, MIN(r.date_from), DATE_ADD(MIN(r.date_from), INTERVAL ? DAY), ?, 'RO', 'STD',
-            ROUND(MIN(r.price) * ? / 2, 2), ROUND(MIN(r.price) * ?, 2), 'EUR', 0
+            ?, MIN(r.date_from), DATE_ADD(MIN(r.date_from), INTERVAL ? DAY), ?, 
+            r.board_code, r.room_code,
+            ROUND((
+              (r.price * ?) +
+              COALESCE(supp.discount_percent, 0) +
+              COALESCE(CAST(SUBSTRING_INDEX(SUBSTRING_INDEX(promo.promotion_data, 'discount', -1), ',', 1) AS DECIMAL(10,2)), 0) +
+              COALESCE(
+                CASE WHEN tax.per_night = 'Y' THEN tax.amount * ? ELSE tax.amount END,
+                CASE WHEN tax.percentage > 0 THEN (r.price * ? * tax.percentage / 100) ELSE 0 END,
+                0
+              )
+            ) / 2, 2),
+            ROUND(
+              (r.price * ?) +
+              COALESCE(supp.discount_percent, 0) +
+              COALESCE(CAST(SUBSTRING_INDEX(SUBSTRING_INDEX(promo.promotion_data, 'discount', -1), ',', 1) AS DECIMAL(10,2)), 0) +
+              COALESCE(
+                CASE WHEN tax.per_night = 'Y' THEN tax.amount * ? ELSE tax.amount END,
+                CASE WHEN tax.percentage > 0 THEN (r.price * ? * tax.percentage / 100) ELSE 0 END,
+                0
+              )
+            , 2),
+            'EUR',
+            CASE WHEN promo.id IS NOT NULL THEN 1 ELSE 0 END
           FROM hotel_rates r
           INNER JOIN hotels h ON h.id = r.hotel_id
-          WHERE r.price > 0
+          LEFT JOIN hotel_supplements supp ON supp.hotel_id = r.hotel_id 
+            AND r.date_from BETWEEN supp.date_from AND supp.date_to
+          LEFT JOIN hotel_promotions promo ON promo.hotel_id = r.hotel_id
+          LEFT JOIN hotel_tax_info tax ON tax.hotel_id = r.hotel_id 
+            AND r.room_code = tax.room_code AND r.board_code = tax.board_code
+          WHERE r.price > 0 AND r.adults = 2
           ${hotelId ? 'AND r.hotel_id = ?' : ''}
           GROUP BY h.id, h.name, h.destination_code, h.country_code, h.category, h.latitude, h.longitude
           ON DUPLICATE KEY UPDATE 
             hotel_name = VALUES(hotel_name),
             price_pp = VALUES(price_pp), 
-            total_price = VALUES(total_price), 
+            total_price = VALUES(total_price),
+            has_promotion = VALUES(has_promotion),
             derived_at = NOW()
-        `, hotelId ? [cat, n, n, n, n, hotelId] : [cat, n, n, n, n]);
+        `, hotelId ? [cat, n, n, n, n, n, n, n, n, hotelId] : [cat, n, n, n, n, n, n, n, n]);
 
         total += res.affectedRows || 0;
         Logger.info(`✅ ${cat}: ${res.affectedRows}`);
@@ -1219,9 +1303,9 @@ export class HotelBedFileRepository {
       await pool.query('SET FOREIGN_KEY_CHECKS = 1');
 
       const dur = ((Date.now() - start) / 1000).toFixed(2);
-      Logger.info(`✅ ${total} prices computed in ${dur}s`);
+      Logger.info(`✅ ${total} prices with FULL formula in ${dur}s`);
 
-      return { success: true, computed: total, duration: `${dur}s` };
+      return { success: true, computed: total, processed: total, duration: `${dur}s`, speed: `${(total / parseFloat(dur)).toFixed(0)}/s` };
     } catch (error: any) {
       await pool.query('SET SESSION TRANSACTION ISOLATION LEVEL REPEATABLE READ').catch(() => {});
       await pool.query('SET FOREIGN_KEY_CHECKS = 1').catch(() => {});
