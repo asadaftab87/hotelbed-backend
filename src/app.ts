@@ -5,8 +5,10 @@ import express from 'express';
 import { port, environment } from '@config/globals';
 import { Server } from './api/server';
 import Logger from '@/core/Logger';
-import { testConnection } from '@config/database';
+import pool, { testConnection } from '@config/database';
 import { redisManager } from '@config/redis.config';
+import { env } from '@config/globals';
+import { startCronJobs, stopCronJobs } from '@/cron/jobs';
 // import { queueManager } from './jobs/queue.manager';
 // import { cronScheduler } from './jobs/cron.scheduler';
 
@@ -66,7 +68,7 @@ import { redisManager } from '@config/redis.config';
       Logger.error('Unhandled rejection at:', promise, 'reason:', reason);
     });
 
-    const app: express.Application = new Server().app
+  const app: express.Application = new Server().app
 
     // Simple home page (stops the noisy 404s on GET /)
     app.get('/', (_req, res) => res.status(200).send('OK'));
@@ -80,55 +82,62 @@ import { redisManager } from '@config/redis.config';
 
     server.listen(port)
 
+    const cronAllowed = env.ENABLE_CRON && env.NODE_ENV !== 'development';
+
     server.on('listening', () => {
       Logger.info(`🚀 Server listening on port ${port} in ${environment} mode`);
       Logger.info(`📊 API docs: http://localhost:${port}/api/v1`);
       Logger.info(`🔍 Search: http://localhost:${port}/api/v1/search`);
       Logger.info(`🏨 Hotels: http://localhost:${port}/api/v1/hotels`);
+
+      if (cronAllowed) {
+        try {
+          startCronJobs();
+        } catch (error) {
+          Logger.error('❌ Failed to start cron jobs', error);
+        }
+      } else {
+        if (env.ENABLE_CRON && env.NODE_ENV === 'development') {
+          Logger.info('⏭️ Cron jobs paused for development environment');
+        } else {
+          Logger.info('⏭️ Cron jobs disabled (ENABLE_CRON=false)');
+        }
+      }
     });
 
     // Graceful shutdown
-    // const shutdown = async () => {
-    //   Logger.info('🛑 Shutting down gracefully...');
+    const shutdown = async () => {
+      Logger.info('🛑 Shutting down gracefully...');
 
-    //   // try {
-    //   //   // Stop cron jobs
-    //   //   cronScheduler.stopAll();
-    //   // } catch (err) {
-    //   //   Logger.debug('Error stopping cron:', err);
-    //   // }
+      if (cronAllowed) {
+        try {
+          stopCronJobs();
+        } catch (err) {
+          Logger.debug('Error stopping cron jobs:', err);
+        }
+      }
 
-    //   // try {
-    //   //   // Close queue connections
-    //   //   await queueManager.close();
-    //   // } catch (err) {
-    //   //   Logger.debug('Error closing queue:', err);
-    //   // }
+      try {
+        await redisManager.disconnect();
+      } catch (err) {
+        Logger.debug('Error disconnecting Redis:', err);
+      }
 
-    //   try {
-    //     // Close Redis
-    //     await redisManager.disconnect();
-    //   } catch (err) {
-    //     Logger.debug('Error disconnecting Redis:', err);
-    //   }
+      try {
+        await pool.end();
+        Logger.info('Database connection pool closed');
+      } catch (err) {
+        Logger.debug('Error closing database pool:', err);
+      }
 
-    //   try {
-    //     // Close database pool
-    //     const pool = require('./database').default;
-    //     await pool.end();
-    //     Logger.info('Database connection pool closed');
-    //   } catch (err) {
-    //     Logger.debug('Error closing database pool:', err);
-    //   }
+      server.close(() => {
+        Logger.info('✅ Server closed');
+        process.exit(0);
+      });
+    };
 
-    //   server.close(() => {
-    //     Logger.info('✅ Server closed');
-    //     process.exit(0);
-    //   });
-    // };
-
-    // process.on('SIGTERM', shutdown);
-    // process.on('SIGINT', shutdown);
+    process.on('SIGTERM', shutdown);
+    process.on('SIGINT', shutdown);
 
   } catch (err: any) {
     console.log(err);

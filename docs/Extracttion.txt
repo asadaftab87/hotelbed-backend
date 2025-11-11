@@ -1,0 +1,143 @@
+
+Hotelbeds Cache API Extraction Reference
+=======================================
+
+Purpose
+-------
+
+Provide the definitive extraction blueprint for Hotelbeds Cache API data. Every change to the CSV generator or loaders must keep this mapping in sync with the official spec: <https://developer.hotelbeds.com/documentation/hotels/cache-api/file-specification/>.
+
+Processing Overview
+-------------------
+
+1. Download cache/update ZIP.
+2. Extract to `downloads/hotelbed_cache_*`.
+3. Process GENERAL files (`GHOT_F`, `IDES_F`, `GCAT_F`, `GTTO_F`, etc.).
+4. Stream `DESTINATIONS/<destination>/<hotel file>` blocks, splitting `{BLOCK}`…`{/BLOCK}` sections line by line and writing to CSV.
+5. Bulk-load CSVs into Aurora (`LOAD DATA LOCAL INFILE` or S3 pipeline).
+6. Validate pricing inputs (taxes, fees, promotions) before recomputing `cheapest_pp`.
+
+Block Reference (fields per spec)
+---------------------------------
+
+The table below lists **required columns** per block. Unless stated, blocks deliver one record per line with colon-separated fields.
+
+| Block | Key Fields (order matches spec) |
+| --- | --- |
+| `{CCON}` | `destination`, `office_code`, `contract_code`, `contract_name`, `company_code`, `service_type`, `hotel_code`, `giata_code`, `date_from`, `date_to`, `currency`, `board_code`, `tax`, `classification`, `opaque`, `payment_model`, `release_days`, `max_rooms`, `fix_rate`, additional flags (~40 fields total). |
+| `{CNHA}` | `room_code`, `characteristic`, `is_standard`, `min_adults`, `max_adults`, `min_children`, `max_children`, `min_pax`, `max_pax`, `min_infants`, `max_infants`, `allocation`, `release_days`. |
+| `{CNIN}` | `date_from`, `date_to`, `room_code`, `board_code`, `inventory_payload`. |
+| `{CNCT}` | `date_from`, `date_to`, `room_code`, `board_code`, `rate_type`, `rate_code`, `base_price`, `commission`, `tax_amount`, `price`, `currency`, `adults`, `children`, `board_type`, `distribution_model`, additional qualifiers. |
+| `{CNSU}` | `date_from`, `date_to`, `supplement_code`, `supplement_type`, `discount_percent`, `amount`, `applies_to`, `min_nights`, `max_nights`, `per_person`, `per_night`. |
+| `{CNPR}` | `promotion_code`, `promo_type`, `date_from`, `date_to`, `application_initial_date`, `application_final_date`, `application_type`, `is_cumulative`, `discount_percent`, `discount_amount`, `max_occupancy`, `min_nights`, `max_nights`. |
+| `{CNHF}` | `date_from`, `date_to`, `fee_code`, `fee_type`, `amount`, `percentage`, `adult_amount`, `child_amount`, `infant_amount`, `age_from`, `age_to`, `is_per_person`, `is_per_night`, `is_per_service`, `currency`. |
+| `{ATAX}` | `date_from`, `date_to`, `room_code`, `board_code`, `tax_code`, `included_flag`, `min_nights`, `max_nights`, `min_age`, `max_age`, `per_night`, `per_person`, `amount`, `percentage`, `currency`, `apply_over`, `market`, `legal_text`. |
+| `{CNCL}` | `country_code`, `is_activated (Y/N)`, optional validity dates. |
+| `{CNES}` | `condition_code`, `condition_type`, `condition_text`, `date_from`, `date_to`. |
+| `{CNOE}` | `rule_from`, `rule_to`, `is_allowed`. |
+| `{CNEM}` | `date_from`, `date_to`, `notification_type`, `room_code`, `board_code`, `min_pax`, `max_pax`, `flags`. |
+| `{CNTA}` | `rate_code`, `tag_type`, `tag_value`, `priority`. |
+| `{CNCF}` | `config_key`, `config_value`, `date_from`, `date_to`, `criteria`, `language`. |
+| `{CNPV}` | Mirror of `{CNPR}` (pricing rules) with modifier values. |
+| `{CNSR}` | `request_code`, `request_type`, `request_text`. |
+| `{CNGR}` | `group_code`, `group_type`, `date_from`, `date_to`, `description`. |
+| `{CNNH}` | `language`, `title`, `description` (roulette messages). |
+| `{SIIN}` / `{SIAP}` | Supplemental inventory/rates matching `{CNIN}` / `{CNCT}` fields. |
+
+Mapping Expectations
+--------------------
+
+For each block we maintain:
+
+1. **CSV schema** – Must list every field above in the correct order.
+2. **Loader mapping** – Must insert into tables with matching columns (see `database/hotelbed_complete_schema.sql`). Any extra DB columns (e.g., timestamps) are handled by defaults.
+3. **Validation** – Post-import checks ensure critical columns (currency, tax amounts, flags) are non-null when source data provides them.
+
+Critical Requirements
+---------------------
+
+• `{ATAX}` rows must exist for every contract + room combination where taxes apply. CSV → `hotel_tax_info.csv` with all spec fields; loader → `hotel_tax_info` table (add columns if missing).
+• `{CNHF}` must populate a dedicated handling fees table (not `hotel_room_features`); include adult/child/age-specific amounts and per-service/per-night flags.
+• `{CCON}` requires full contract metadata (payment_model, classification, release_days, max_rooms, opaque, fix_rate, etc.). Missing fields lead to pricing or availability errors.
+• `{CNCL}` should create a `contract_markets` dataset used for market filtering; do not mix with cancellation penalties.
+• `{CNPR}` / `{CNPV}` must capture application windows and restriction flags to ensure promotions apply correctly.
+
+Next Steps
+----------
+
+1. Update CSV generator to emit every field listed here.
+2. Adjust loaders (direct + S3) to match column order and types.
+3. Apply schema migrations to add any missing columns/tables.
+4. Implement post-import audits: report contracts with NULL currency, missing taxes/fees, or missing markets.
+5. Recompute `cheapest_pp` only after validating taxes, fees, promotions, and markets for the input set.
+
+Document Owner
+--------------
+
+Data Ingestion Squad – keep this spec aligned with Hotelbeds Cache API documentation.
+
+Current Implementation Check
+-----------------------------
+
+The loader lives in `src/api/components/hotelBed/hotelBed.repository.ts` and delegates to `CSVGenerator`. The table shows how each block is routed today. Status = `OK` (implemented), `Mismatch` (implemented but not aligned with spec), or `Missing` (ignored).
+
+| Block | Meaning (spec) | CSV file (current) | Status | Notes |
+| --- | --- | --- | --- | --- |
+| `GHOT_F` | General hotels (names, geo) | `hotels.csv` | OK | Parsed before destination files. |
+| `IDES_F` | Destinations | `destinations.csv` | OK | |
+| `GCAT_F` | Categories | `categories.csv` | OK | |
+| `{CCON}` | Contracts | `hotel_contracts.csv` | OK | Captures contract and board metadata. |
+| `{CNHA}` | Room allocations | `hotel_room_allocations.csv` | OK | Occupancy + allocation counts. |
+| `{CNIN}` | Inventory | `hotel_inventory.csv` | OK | Date ranges plus availability payload. |
+| `{CNCT}` | Rates | `hotel_rates.csv` | OK | Expands nested rate tuples (primary price source). |
+| `{CNSU}` | Supplements | `hotel_supplements.csv` | OK | Discount percent + min nights. |
+| `{CNOE}` | Occupancy rules | `hotel_occupancy_rules.csv` | OK | Allowed/disallowed pax windows. |
+| `{CNEM}` | Email settings | `hotel_email_settings.csv` | OK | Used sparingly; persisted as-is. |
+| `{CNTA}` | Rate tags | `hotel_rate_tags.csv` | OK | Label metadata around specific rates. |
+| `{CNCF}` | Configurations | `hotel_configurations.csv` | OK | Generic config key/value. |
+| `{CNPV}` | Promotions | `hotel_promotions.csv` | OK | Captures promo code/type/value. |
+| `{CNSR}` | Special requests | `hotel_special_requests.csv` | OK | |
+| `{CNGR}` | Groups | `hotel_groups.csv` | OK | |
+| `{CNCL}` | Valid markets | `hotel_cancellation_policies.csv` | Mismatch | We currently store the raw text as “cancellation policy”. Should become a markets table. |
+| `{CNES}` | Special conditions | `hotel_special_conditions.csv` | OK | |
+| `{CNHF}` | Handling fees | `hotel_room_features.csv` | Mismatch | Implementation treats CNHF as room features (room_code, feature_code, feature_value). **This is likely why some hotels lose pricing context.** |
+| `{CNPR}` (pricing rules) | Pricing adjustments | `hotel_pricing_rules.csv` | OK | Distinct from promo block in spec doc but same identifier; code stores adjustment values. |
+| `{ATAX}` | Taxes | `hotel_tax_info.csv` | Partial | We only keep tax type/rate/amount/inclusion; spec has more attributes. |
+| `{SIIN}` | Supplemental inventory | `hotel_inventory.csv` | OK | Alternate inventory section merged into same CSV. |
+| `{SIAP}` | Supplemental rates | `hotel_rates.csv` | OK | Alternate rate section merged into same CSV. |
+| `{CNNH}` | Roulette descriptions | — | Missing | Currently ignored entirely. |
+
+Key Findings / Required Actions
+--------------------------------
+
+1. **Room pricing gaps**: Because `{CNHF}` (fees) is being stored as room features, the extractor never emits actual fee rows. Hotels that rely on handling fees to complete a rate package might produce incomplete pricing downstream. Fix: add a dedicated `hotel_handling_fees.csv` (or similar) and adjust `import-all-csvs.js` + schema accordingly.
+2. **Market validity**: `{CNCL}` should map to a markets table (country + validity flag). Today the CSV is labelled as cancellation policies, which is misleading. Update naming/schema to reflect markets or add a new writer. This matters when filtering rates by client market.
+3. **Roulette descriptions**: `{CNNH}` is dropped. If content teams or search need these descriptions, add a writer and import path (`hotel_roulette_descriptions.csv`).
+4. **Tax completeness**: Evaluate whether the four columns we store cover “per night/per pax”, currency, and inclusion flags required by the business logic. Extend the CSV if not.
+
+Validated Workflow (high level)
+--------------------------------
+
+1. Download cache/update ZIP.
+2. Extract into `downloads/hotelbed_cache_*`.
+3. Parse `GENERAL` folder (`GHOT_F`, `IDES_F`, `GCAT_F`).
+4. Stream destination hotel files, section by section, writing CSV rows according to the table above.
+5. Run `import-all-csvs.js` (direct Aurora `LOAD DATA LOCAL INFILE`) or the S3 pipeline. Verify row counts per table.
+6. Post-load, run `/compute-prices` to rebuild `cheapest_pp` and spot check problematic hotels.
+
+How to Use This Document
+------------------------
+
+• When onboarding or debugging, start here to understand which blocks drive which tables.
+• Before adjusting the extractor, update this mapping first so we preserve alignment with Hotelbeds spec.
+• If Hotelbeds publishes new sections, list them under “Baseline Spec” and decide whether they belong in the implemented table.
+• Keep the “Key Findings” list current; it explains known mismatches that must be addressed to close data gaps.
+
+Next Steps (if room pricing issues persist)
+------------------------------------------
+
+1. Implement a proper `{CNHF}` → fees pipeline; backfill historical data once the schema is ready.
+2. Rename or split `{CNCL}` output to represent market validity correctly.
+3. Confirm `hotel_rates.csv` contains entries for affected hotels. If missing, inspect the raw hotel file for `{CNCT}` or `{SIAP}` blocks — absence there means the source data lacks prices, otherwise investigate parser edge cases (e.g., rate tuples malformed).
+
+Document Owner: Engineering (Data Ingestion Squad) — update whenever extraction logic changes.

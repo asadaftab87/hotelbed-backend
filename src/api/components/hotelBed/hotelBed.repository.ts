@@ -9,6 +9,7 @@ import { env } from '@config/globals';
 import AdmZip from 'adm-zip';
 import { CSVGenerator } from '@/utils/csvGenerator';
 import { S3Uploader } from '@/utils/s3Uploader';
+import { runImportAllCSVs } from '@/utils/csvImporter';
 
 export class HotelBedFileRepository {
   private readonly downloadsDir = path.join(process.cwd(), 'downloads');
@@ -369,12 +370,15 @@ export class HotelBedFileRepository {
     const startTime = Date.now();
 
     console.log('\n' + '='.repeat(80));
-    console.log('🚀 NEW IMPORT PROCESS: CSV → S3 → Aurora LOAD DATA');
+    console.log('🚀 NEW IMPORT PROCESS: CSV → Aurora LOAD DATA');
     console.log('='.repeat(80));
 
     try {
+      const useS3Pipeline = process.env.USE_S3_PIPELINE === 'true';
+      let stepCounter = 1;
+
       // Step 1: Generate CSV files
-      console.log('\n📝 STEP 1/3: Generating CSV files...');
+      console.log(`\n📝 STEP ${stepCounter++}: Generating CSV files...`);
       const csvResult = await this.generateCSVFiles(extractedPath);
       console.log(`✅ CSV generation complete: ${csvResult.totalFiles} files processed`);
       console.log(`   Total records: ${csvResult.totalRecords.toLocaleString()}`);
@@ -385,21 +389,41 @@ export class HotelBedFileRepository {
         duration: csvResult.duration
       });
 
-      // Step 2: Upload to S3
-      console.log('\n☁️  STEP 2/3: Uploading CSV files to S3...');
-      Logger.info('[IMPORT] Starting S3 upload...');
-      const s3Result = await this.uploadCSVsToS3();
-      console.log(`✅ S3 upload complete: ${Object.keys(s3Result.locations).length} files uploaded`);
-      console.log(`   Duration: ${s3Result.duration}`);
+      let s3Result: any = null;
+      let loadResult: any = null;
 
-      // Step 3: Load from S3 to Aurora
-      console.log('\n💾 STEP 3/3: Loading data from S3 to Aurora...');
-      const loadResult = await this.loadFromS3ToAurora(s3Result.locations);
-      console.log(`✅ Database load complete`);
-      console.log(`   Duration: ${loadResult.duration}`);
+      if (useS3Pipeline) {
+        console.log(`\n☁️  STEP ${stepCounter++}: Uploading CSV files to S3...`);
+        Logger.info('[IMPORT] Starting S3 upload...');
+        s3Result = await this.uploadCSVsToS3();
+        console.log(`✅ S3 upload complete: ${Object.keys(s3Result.locations).length} files uploaded`);
+        console.log(`   Duration: ${s3Result.duration}`);
+
+        console.log(`\n💾 STEP ${stepCounter++}: Loading data from S3 to Aurora...`);
+        loadResult = await this.loadFromS3ToAurora(s3Result.locations);
+        console.log('✅ Database load complete');
+        console.log(`   Duration: ${loadResult.duration}`);
+      } else {
+        console.log(`\n🗄️  STEP ${stepCounter++}: Loading CSV files directly into Aurora...`);
+        const importStart = Date.now();
+        const directResult = await runImportAllCSVs({ csvDir: this.csvDir });
+        const importDuration = ((Date.now() - importStart) / 1000).toFixed(2);
+
+        if (!directResult.success) {
+          throw new Error(directResult.error || 'CSV import script returned failure');
+        }
+
+        loadResult = {
+          success: true,
+          duration: `${importDuration}s`,
+          tables: directResult.tables,
+        };
+
+        console.log(`✅ Database load complete in ${importDuration}s`);
+      }
 
       // Step 4: Fetch hotel names from Content API
-      console.log('\n🏨 STEP 4: Fetching hotel names from Content API...');
+      console.log(`\n🏨 STEP ${stepCounter++}: Fetching hotel names from Content API...`);
       const nameStart = Date.now();
       try {
         const [placeholders]: any = await pool.query(
@@ -455,8 +479,8 @@ export class HotelBedFileRepository {
         console.log('   Continuing with placeholder names...');
       }
 
-      // Step 5: Compute cheapest prices immediately after import
-      console.log('\n💰 STEP 5: Computing cheapest prices with hotel details...');
+  // Step 5: Compute cheapest prices immediately after import
+  console.log(`\n💰 STEP ${stepCounter++}: Computing cheapest prices with hotel details...`);
       const priceStart = Date.now();
       
       const connection = await pool.getConnection();
@@ -510,14 +534,19 @@ export class HotelBedFileRepository {
       console.log(`🎯 Target: 30 minutes - Actual: ${totalDuration} minutes`);
       console.log('='.repeat(80) + '\n');
 
-      return {
+      const response: any = {
         success: true,
         csv: csvResult,
-        s3: s3Result,
         load: loadResult,
         totalDuration: `${totalDuration} minutes`,
         totalRecords: csvResult.totalRecords,
       };
+
+      if (s3Result) {
+        response.s3 = s3Result;
+      }
+
+      return response;
     } catch (error: any) {
       Logger.error('[IMPORT] Import process failed', { error: error.message, stack: error.stack });
       throw error;

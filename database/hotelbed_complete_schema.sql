@@ -414,23 +414,31 @@ CREATE TABLE IF NOT EXISTS `hotel_pricing_rules` (
   FOREIGN KEY (`hotel_id`) REFERENCES `hotels`(`id`) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
--- ============================================
--- HOTEL TAX INFORMATION (ATAX)
--- ============================================
 CREATE TABLE IF NOT EXISTS `hotel_tax_info` (
   `id` BIGINT AUTO_INCREMENT PRIMARY KEY,
   `hotel_id` BIGINT,
-  `tax_type` VARCHAR(50),
-  `tax_code` VARCHAR(50),
-  `tax_rate` DECIMAL(5, 2),
-  `tax_amount` DECIMAL(10, 2),
-  `is_included` CHAR(1),
   `date_from` DATE,
   `date_to` DATE,
-  `tax_data` TEXT,
+  `room_code` VARCHAR(50),
+  `board_code` VARCHAR(10),
+  `tax_code` VARCHAR(50),
+  `included_flag` CHAR(1),
+  `max_nights` INT,
+  `min_age` INT,
+  `max_age` INT,
+  `per_night` CHAR(1),
+  `per_pax` CHAR(1),
+  `amount` DECIMAL(10, 2),
+  `percentage` DECIMAL(10, 4),
+  `currency` VARCHAR(5),
+  `apply_over` CHAR(1),
+  `market_code` VARCHAR(10),
+  `legal_text` VARCHAR(255),
   `created_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
   INDEX `idx_hotel` (`hotel_id`),
-  INDEX `idx_tax_type` (`tax_type`),
+  INDEX `idx_tax` (`tax_code`),
+  INDEX `idx_room_board` (`room_code`, `board_code`),
+  INDEX `idx_dates` (`date_from`, `date_to`),
   FOREIGN KEY (`hotel_id`) REFERENCES `hotels`(`id`) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 

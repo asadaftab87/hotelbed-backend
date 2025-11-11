@@ -581,16 +581,45 @@ export class CSVGenerator {
 
     for (const line of lines) {
       const parts = line.split(':');
-      if (parts.length >= 4) {
-        const data = {
-          hotel_id: hotelId,
-          tax_type: parts[0] || null,
-          tax_rate: parseFloat(parts[1]) || 0,
-          tax_amount: parseFloat(parts[2]) || 0,
-          is_included: parts[3] || null,
+      if (parts.length >= 5) {
+        const toDecimal = (value: string | undefined) => {
+          if (!value || value.trim() === '') return null;
+          const num = parseFloat(value);
+          return Number.isNaN(num) ? null : num;
         };
 
-        // Skip if duplicate
+        const toInteger = (value: string | undefined) => {
+          if (!value || value.trim() === '') return null;
+          const num = parseInt(value, 10);
+          return Number.isNaN(num) ? null : num;
+        };
+
+        const normalizeFlag = (value: string | undefined) => {
+          if (!value || value.trim() === '') return null;
+          return value.trim().toUpperCase();
+        };
+
+        const data = {
+          hotel_id: hotelId,
+          date_from: parts[0] || null,
+          date_to: parts[1] || null,
+          room_code: parts[2] || null,
+          board_code: parts[3] || null,
+          tax_code: parts[4] || null,
+          included_flag: normalizeFlag(parts[5]),
+          max_nights: toInteger(parts[6]),
+          min_age: toInteger(parts[7]),
+          max_age: toInteger(parts[8]),
+          per_night: normalizeFlag(parts[9]),
+          per_pax: normalizeFlag(parts[10]),
+          amount: toDecimal(parts[11]),
+          percentage: toDecimal(parts[12]),
+          currency: parts[13] || null,
+          apply_over: normalizeFlag(parts[14]),
+          market_code: parts[15] || null,
+          legal_text: parts[16] || null,
+        };
+
         if (this.duplicateDetector.isTaxInfoDuplicate(hotelId, data)) {
           continue;
         }
@@ -739,6 +768,12 @@ export class CSVGenerator {
       case 'ATAX':
         this.writeTaxInfo(writers.hotel_tax_info, hotelId, lines);
         break;
+      case 'SIIN':
+        this.writeInventoryFromSIIN(writers.hotel_inventory, hotelId, lines);
+        break;
+      case 'SIAP':
+        this.writeRatesFromSIAP(writers.hotel_rates, hotelId, lines);
+        break;
     }
   }
 
@@ -811,6 +846,75 @@ export class CSVGenerator {
    */
   clearDuplicateDetector() {
     this.duplicateDetector.clear();
+  }
+
+  /**
+   * Write inventory from SIIN section (contract files)
+   */
+  writeInventoryFromSIIN(writer: any, hotelId: number, lines: string[]) {
+    if (!lines || lines.length === 0) return;
+
+    for (const line of lines) {
+      const parts = line.split(':');
+      if (parts.length >= 6) {
+        const data = {
+          hotel_id: hotelId,
+          room_code: parts[3] || null,
+          board_code: parts[4] || null,
+          date_from: parts[0] || null,
+          date_to: parts[1] || null,
+          availability_data: parts[5] || null,
+        };
+
+        if (this.duplicateDetector.isInventoryDuplicate(hotelId, data)) {
+          continue;
+        }
+
+        writer.stream.write(data);
+        writer.count++;
+      }
+    }
+  }
+
+  /**
+   * Write rates from SIAP section (contract files)
+   */
+  writeRatesFromSIAP(writer: any, hotelId: number, lines: string[]) {
+    if (!lines || lines.length === 0) return;
+
+    for (const line of lines) {
+      const parts = line.split(':');
+      if (parts.length >= 10) {
+        const pricesString = parts[9] || '';
+        const priceMatches = pricesString.matchAll(/\(([^,]*),([^,]*),([^)]+)\)/g);
+
+        for (const match of priceMatches) {
+          const price = parseFloat(match[3]);
+          if (price > 0) {
+            const data = {
+              hotel_id: hotelId,
+              room_code: parts[3] || null,
+              board_code: parts[4] || null,
+              date_from: parts[0] || null,
+              date_to: parts[1] || null,
+              rate_type: 'N',
+              base_price: 0,
+              tax_amount: 0,
+              adults: parseInt(parts[6]) || 0,
+              board_type: parts[4] || null,
+              price: price,
+            };
+
+            if (this.duplicateDetector.isRateDuplicate(hotelId, data)) {
+              continue;
+            }
+
+            writer.stream.write(data);
+            writer.count++;
+          }
+        }
+      }
+    }
   }
 }
 

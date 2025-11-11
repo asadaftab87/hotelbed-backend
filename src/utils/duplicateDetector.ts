@@ -299,7 +299,7 @@ export class DuplicateDetector {
   isTaxInfoDuplicate(hotelId: number, data: any): boolean {
     this.stats.byTable.hotel_tax_info.processed++;
     this.stats.totalProcessed++;
-    const h = this.hash(`${hotelId}:${data.tax_type}`);
+    const h = this.hash(`${hotelId}:${data.tax_code || ''}:${data.room_code || ''}:${data.board_code || ''}:${data.date_from || ''}`);
     if (this.check(this.taxInfoHashes, h)) {
       this.stats.byTable.hotel_tax_info.duplicates++;
       this.stats.duplicatesSkipped++;

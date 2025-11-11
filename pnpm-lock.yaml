@@ -17,6 +17,9 @@ importers:
       adm-zip:
         specifier: ^0.5.16
         version: 0.5.16
+      app-root-path:
+        specifier: ^3.1.0
+        version: 3.1.0
       aws-sdk:
         specifier: ^2.1692.0
         version: 2.1692.0
@@ -75,6 +78,9 @@ importers:
       '@types/adm-zip':
         specifier: ^0.5.7
         version: 0.5.7
+      '@types/app-root-path':
+        specifier: ^3.1.0
+        version: 3.1.0
       '@types/compression':
         specifier: ^1.7.5
         version: 1.8.1
@@ -601,6 +607,10 @@ packages:
   '@types/adm-zip@0.5.7':
     resolution: {integrity: sha512-DNEs/QvmyRLurdQPChqq0Md4zGvPwHerAJYWk9l2jCbD1VPpnzRJorOdiq4zsw09NFbYnhfsoEhWtxIzXpn2yw==}
 
+  '@types/app-root-path@3.1.0':
+    resolution: {integrity: sha512-wZsDCkNcLUSGR+mM6NXy8tj4XUius6wBvbt4TaqZNmp9S+PNocQg9AwjS71tabcHWVWVag0O+lX+FkyuCdO8Ng==}
+    deprecated: This is a stub types definition. app-root-path provides its own type definitions, so you do not need this installed.
+
   '@types/body-parser@1.19.6':
     resolution: {integrity: sha512-HLFeCYgz89uk22N5Qg3dvGvsv46B8GLvKKo1zKG4NybA8U2DiEO3w9lqGg29t/tfLRJpJ6iQxnVw4OnB7MoM9g==}
 
@@ -693,6 +703,10 @@ packages:
   anymatch@3.1.3:
     resolution: {integrity: sha512-KMReFUr0B4t+D+OBkjR3KYqvocp2XaSzO55UcB6mgQMd3KbcE+mWTyvVV7D/zsdEbNnV6acZUutkiHQXvTr1Rw==}
     engines: {node: '>= 8'}
+
+  app-root-path@3.1.0:
+    resolution: {integrity: sha512-biN3PwB2gUtjaYy/isrU3aNWI5w+fAfvHkSvCKeQGxhmYpwKFUxudR3Yya+KqVRHBmEDYh+/lTozYCFbmzX4nA==}
+    engines: {node: '>= 6.0.0'}
 
   arg@4.1.3:
     resolution: {integrity: sha512-58S9QDqG0Xx27YwPSt9fJxivjYl432YCwfDMfZ+71RAqUrZef7LrKQZ3LHLOwCS4FLNBplP533Zx895SeOCHvA==}
@@ -2716,6 +2730,10 @@ snapshots:
     dependencies:
       '@types/node': 20.19.24
 
+  '@types/app-root-path@3.1.0':
+    dependencies:
+      app-root-path: 3.1.0
+
   '@types/body-parser@1.19.6':
     dependencies:
       '@types/connect': 3.4.38
@@ -2820,6 +2838,8 @@ snapshots:
     dependencies:
       normalize-path: 3.0.0
       picomatch: 2.3.1
+
+  app-root-path@3.1.0: {}
 
   arg@4.1.3: {}
 
