@@ -1,0 +1,127 @@
+Hotel Data Processing Project
+Documentation
+Reference API
+🔗 Hotelbeds Cache API Documentation
+1. EXISTING FLOW (ALREADY IMPLEMENTED)
+1.1 Full API Data Download
+●
+The Full API endpoint is triggered once per day at 12:00 PM (noon).
+The API returns a ZIP file (up to 700 MB) which is downloaded into:
+/project-root/downloads/
+●
+●
+The downloaded ZIP is saved with a timestamp-based name for version tracking.
+1.2 Extraction Process
+●
+The downloaded ZIP file is extracted automatically.
+●
+Extracted data size: 15–20 GB.
+●
+Extraction produces two main folders:
+○
+general
+○
+destination
+1.3 Destination Folder Structure
+●
+Inside the destination folder, data is organized by country codes (e.g., AYT,
+DXB, etc.).
+Each country folder contains multiple files with sample data like:
+{CNHA}
+DBT:ST:2:2:2:2:0
+DUS:ST:1:1:1:1:0
+{/CNHA}
+●
+●
+Data is parsed using the “:
+`” delimiter to separate fields.
+1.4 Data Parsing and CSV Generation
+●
+The parsed data is separated into multiple tables, such as:
+○
+rates
+○
+rooms
+○
+hotels
+○
+prices
+●
+Each table’s data is exported to a CSV file for easy import and storage.
+1.5 Upload to S3
+●
+All generated CSV files are uploaded to AWS S3 in organized folders.
+●
+The S3 structure mirrors the local folder structure for consistency.
+1.6 Database Import
+●
+The CSV data from S3 is imported into the Aurora MySQL Cluster.
+●
+The import process is already automated and verified.
+1.7 Cron Job Configuration
+Process API Type Frequency Time
+Full Data Sync /full API Once per
+day
+12:00 PM
+Every hour —
+Update Sync /update
+API
+2. NEW TASKS (TO BE IMPLEMENTED)
+2.1 Duplicate Record Handling
+●
+Before generating CSV files, detect and skip duplicate records.
+●
+Duplicates should not be included in the CSV or uploaded to S3.
+2.2 S3 Role Permission Update
+●
+Update the IAM Role for S3 access:
+○
+Grant read and write access to the Aurora MySQL (RDS) service.
+○
+This ensures smooth import/export between S3 and RDS.
+2.3 Update API Flow
+●
+●
+Steps:
+The Update API flow will be a copy-paste implementation of the Full API flow.
+1. Trigger the Update API every hour (via cron).
+2. Download the ZIP file.
+●
+3. Extract it.
+4. Parse data using the same field mapping as the Full API.
+5. Generate CSV files.
+6. Upload to S3.
+7. Import into the Aurora database.
+The only difference is that this process will update existing data instead of
+performing a full data replacement.
+2.4 Price Calculation Process (Already Completed)
+●
+The Price Calculation module is developed and implemented.
+●
+It stores each hotel’s:
+○
+Cheapest available price
+○
+Complete hotel information
+○
+Room details
+○
+Country and availability data
+●
+Current status:
+○
+○
+✅ Development completed
+🧪 Pending: Testing and fixing small bugs before final release
+3. Summary
+Category Description
+Existing
+Work
+Full API flow (download → extract → parse → CSV → S3 → Aurora
+import) is already complete and functional.
+New Work Add duplicate record skipping, update S3 → RDS permissions, implement
+Update API flow (same as Full API).
+Testing
+Work
+Cron Jobs Price calculation process completed; needs testing and small bug fixes.
+/full API → daily at 12 PM; /update API → hourly.

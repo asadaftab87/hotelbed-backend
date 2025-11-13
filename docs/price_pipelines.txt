@@ -1,0 +1,34 @@
+Pipelines for Price in Hotelbeds Cache API
+ Integration
+ 
+What are Price Pipelines?
+In the Hotelbeds Cache API integration, a price pipeline refers to the structured sequence of
+processing steps that transform raw hotel rate data (net rates, promotions, policies, fees, taxes, and
+FX) into the final end-user payable price (E.P.P). This ensures accurate, consistent, and
+customer-ready prices.
+Why Pipelines?
+Price pipelines provide a standardized, modular approach to price computation. They make the
+process easier to maintain, test, and scale while ensuring that every applicable business rule is
+applied in the correct order.
+Typical Steps in a Price Pipeline
+1. **Ingest (Data Retrieval)**: Fetch net rates, availability, promotions, policies, fees, taxes, and FX
+rates. 2. **Normalization & Eligibility**: Deduplicate rate keys, validate sellability (stop-sale,
+allotment, min/max stay), and determine applicable promotions. 3. **Promotion Engine**: Apply
+discount rules based on the combinability matrix (exclusive vs. cumulative promotions). 4. **Fees &
+Taxes Application**: Add mandatory surcharges, city taxes, and child/extra-bed fees. 5. **Currency
+Conversion & Rounding**: Convert to EUR (or required currencies) and apply rounding rules. 6.
+**Aggregation**: Select the cheapest sellable option per hotel/date/LOS/occupancy. Retain
+alternatives for product detail pages (e.g., refundable vs. non-refundable, with/without breakfast). 7.
+**Output & Storage**: Store results in the cache/index with fields such as E.P.P, board type,
+cancellation class, badges, and metadata like timestamp and version.
+Key Benefits
+- **Modularity**: Each component (promotion engine, tax calculation, FX) can be tested or updated
+independently. - **Reusability**: The same pipeline can serve precompute jobs, delta updates, and
+live fallback. - **Traceability**: Logs and audits can show exactly how each price was derived. -
+**Scalability**: Pipelines can be parallelized to handle millions of hotel/date combinations efficiently.
+Summary
+Price pipelines are the backbone of price computation in Hotelbeds Cache API integration. They
+ensure that raw supplier rates are consistently transformed into accurate end-user payable prices
+(E.P.P), while supporting high performance, maintainability, and business rule compliance.
+
+

@@ -1,0 +1,38 @@
+Uitleg in het Nederlands
+Hotelbeds Cache API — Kernbegrippen
+1) Beschikbaarheid (Availability):
+Dit verwijst naar de vraag of een hotel op een bepaalde datum en met een bepaalde bezetting
+kamers kan aanbieden.
+Het gaat dus om: is er nog allotment (kamers vrij), is er geen stop-sell of uitverkocht-status, en zijn
+de regels (zoals minimumverblijf) geldig?
+2) Synchronisatie-intervallen (Sync Intervals):
+Dit zijn de tijdsintervallen waarin de cache wordt vernieuwd met nieuwe data van Hotelbeds.
+- In het hoogseizoen (veel schommelingen): elke 1–2 minuten voor beschikbaarheid en 2–5
+minuten voor prijzen.
+- In het laagseizoen (weinig veranderingen): minder vaak, bijvoorbeeld 10–15 minuten voor
+beschikbaarheid en 15–30 minuten voor prijzen.
+Het doel: altijd actuele data, zonder onnodig server- of API-verkeer.
+3) Fallback-logica (Fallback):
+Als de gevraagde datum geen beschikbaarheid heeft, wordt automatisch gekeken naar de
+eerstvolgende datum waarop wel kamers beschikbaar zijn.
+De gebruiker krijgt dan een melding zoals: “Niet beschikbaar op {datum}, maar wel vanaf {volgende
+datum} voor {prijs}.”
+Explanation in English
+Hotelbeds Cache API — Core Concepts
+1) Availability:
+This refers to whether a hotel can offer rooms for a given date and occupancy.
+It checks if there is remaining allotment, no stop-sell or sold-out status, and that rules (like minimum
+stay) are satisfied.
+2) Sync Intervals:
+These are the time intervals at which the cache is refreshed with new data from Hotelbeds.
+- In high season (high volatility): every 1–2 minutes for availability and 2–5 minutes for prices.
+- In low season (low volatility): less frequent, e.g. 10–15 minutes for availability and 15–30 minutes
+for prices.
+The goal is to keep data fresh while avoiding unnecessary server or API load.
+3) Fallback Logic:
+If the requested date has no availability, the system automatically searches for the next available
+date with rooms.
+The user then sees a message such as: “Not available on {date}, but available from {next date} at
+{price}.”
+
+
