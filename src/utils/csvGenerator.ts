@@ -21,10 +21,17 @@ export class CSVGenerator {
 
   /**
    * Create CSV file streams for all tables
+   * UPDATED: Added GENERAL folder tables (chains, categories, destinations, hotels)
    */
   createCSVWriters() {
     const tables = [
+      // GENERAL folder tables (master data) - MUST be first for load order
+      'chains',
+      'categories',
+      'destinations',
       'hotels',
+      
+      // DESTINATIONS folder tables (hotel-specific data)
       'hotel_contracts',
       'hotel_room_allocations',
       'hotel_inventory',
@@ -176,6 +183,7 @@ export class CSVGenerator {
 
   /**
    * Write rates to CSV (LARGEST TABLE)
+   * OPTIMIZED: De-duplicates identical rate tuples (365 days with same price = 1 row)
    */
   writeRates(writer: any, hotelId: number, lines: string[]) {
     if (!lines || lines.length === 0) return;
@@ -186,21 +194,31 @@ export class CSVGenerator {
         const ratesString = parts[6] || '';
         const rateMatches = ratesString.matchAll(/\(([^,]+),([^,]+),([^,]+),([^,]+),([^,]+),([^)]+)\)/g);
 
+        // Use Set to deduplicate identical rates on same date range
+        const uniqueRates = new Set<string>();
+
         for (const rateMatch of rateMatches) {
-          writer.stream.write({
-            hotel_id: hotelId,
-            room_code: parts[2] || null,
-            board_code: parts[3] || null,
-            date_from: parts[0] || null,
-            date_to: parts[1] || null,
-            rate_type: rateMatch[1] || null,
-            base_price: parseFloat(rateMatch[2]) || 0,
-            tax_amount: parseFloat(rateMatch[3]) || 0,
-            adults: parseInt(rateMatch[4]) || 0,
-            board_type: rateMatch[5] || null,
-            price: parseFloat(rateMatch[6]) || 0,
-          });
-          writer.count++;
+          // Create unique key: rate_type|base|tax|adults|board|price
+          const rateKey = `${rateMatch[1]}|${rateMatch[2]}|${rateMatch[3]}|${rateMatch[4]}|${rateMatch[5]}|${rateMatch[6]}`;
+          
+          if (!uniqueRates.has(rateKey)) {
+            uniqueRates.add(rateKey);
+            
+            writer.stream.write({
+              hotel_id: hotelId,
+              room_code: parts[2] || null,
+              board_code: parts[3] || null,
+              date_from: parts[0] || null,
+              date_to: parts[1] || null,
+              rate_type: rateMatch[1] || null,
+              base_price: parseFloat(rateMatch[2]) || 0,
+              tax_amount: parseFloat(rateMatch[3]) || 0,
+              adults: parseInt(rateMatch[4]) || 0,
+              board_type: rateMatch[5] || null,
+              price: parseFloat(rateMatch[6]) || 0,
+            });
+            writer.count++;
+          }
         }
       }
     }
@@ -461,19 +479,36 @@ export class CSVGenerator {
 
   /**
    * Write tax info to CSV
+   * ATAX format: 17+ fields per Hotelbeds spec
+   * Format: date_from:date_to:room_code:board_code:tax_code:included_flag:min_nights:max_nights:
+   *         min_age:max_age:per_night:per_person:amount:percentage:currency:apply_over:market:legal_text
    */
   writeTaxInfo(writer: any, hotelId: number, lines: string[]) {
     if (!lines || lines.length === 0) return;
 
     for (const line of lines) {
       const parts = line.split(':');
-      if (parts.length >= 4) {
+      if (parts.length >= 17) {
         writer.stream.write({
           hotel_id: hotelId,
-          tax_type: parts[0] || null,
-          tax_rate: parseFloat(parts[1]) || 0,
-          tax_amount: parseFloat(parts[2]) || 0,
-          is_included: parts[3] || null,
+          date_from: parts[0] || null,
+          date_to: parts[1] || null,
+          room_code: parts[2] || null,
+          board_code: parts[3] || null,
+          tax_code: parts[4] || null,
+          included_flag: parts[5] || null,
+          min_nights: parseInt(parts[6]) || null,
+          max_nights: parseInt(parts[7]) || null,
+          min_age: parseInt(parts[8]) || null,
+          max_age: parseInt(parts[9]) || null,
+          per_night: parts[10] || null,
+          per_person: parts[11] || null,
+          amount: parseFloat(parts[12]) || 0,
+          percentage: parseFloat(parts[13]) || 0,
+          currency: parts[14] || null,
+          apply_over: parts[15] || null,
+          market: parts[16] || null,
+          legal_text: parts[17] || null,
         });
         writer.count++;
       }
@@ -616,6 +651,9 @@ export class CSVGenerator {
         this.writePricingRules(writers.hotel_pricing_rules, hotelId, lines);
         break;
       case 'ATAX':
+        if (lines && lines.length > 0) {
+          Logger.info(`[CSV] Found ATAX data for hotel ${hotelId}: ${lines.length} lines`);
+        }
         this.writeTaxInfo(writers.hotel_tax_info, hotelId, lines);
         break;
     }
@@ -658,17 +696,109 @@ export class CSVGenerator {
    */
   getCSVSummary(writers: Record<string, any>) {
     const summary: any = {};
+    const emptyTables: string[] = [];
     
     for (const [table, writer] of Object.entries(writers)) {
       const stats = fs.statSync(writer.filePath);
+      const sizeMB = (stats.size / 1024 / 1024).toFixed(2);
+      
       summary[table] = {
         records: writer.count,
-        fileSizeMB: (stats.size / 1024 / 1024).toFixed(2),
+        fileSizeMB: sizeMB,
         filePath: writer.filePath,
       };
+
+      // Track empty tables
+      if (writer.count === 0) {
+        emptyTables.push(table);
+      }
+    }
+
+    // Log warnings for empty tables
+    if (emptyTables.length > 0) {
+      Logger.warn(`[CSV] Empty tables (no data in source files): ${emptyTables.join(', ')}`);
+      Logger.info(`[CSV] This is normal if source data doesn't contain these sections (e.g., ATAX, CNHF)`);
     }
 
     return summary;
+  }
+
+  // ============================================
+  // GENERAL FOLDER CSV WRITERS (NEW)
+  // ============================================
+
+  /**
+   * Write hotels to CSV (from GHOT_F files)
+   */
+  writeHotels(writer: any, hotels: any[]) {
+    if (!hotels || hotels.length === 0) return;
+
+    for (const hotel of hotels) {
+      writer.stream.write({
+        id: hotel.id,
+        category: hotel.category || null,
+        destination_code: hotel.destination_code || null,
+        chain_code: hotel.chain_code || null,
+        accommodation_type: hotel.accommodation_type || null,
+        ranking: hotel.ranking || null,
+        group_hotel: hotel.group_hotel || null,
+        country_code: hotel.country_code || null,
+        state_code: hotel.state_code || null,
+        longitude: hotel.longitude || null,
+        latitude: hotel.latitude || null,
+        name: hotel.name || null,
+      });
+      writer.count++;
+    }
+  }
+
+  /**
+   * Write destinations to CSV (from IDES_F files)
+   */
+  writeDestinations(writer: any, destinations: any[]) {
+    if (!destinations || destinations.length === 0) return;
+
+    for (const dest of destinations) {
+      writer.stream.write({
+        code: dest.code,
+        country_code: dest.country_code || null,
+        is_available: dest.is_available || null,
+        name: dest.name || null,
+      });
+      writer.count++;
+    }
+  }
+
+  /**
+   * Write categories to CSV (from GCAT_F files)
+   */
+  writeCategories(writer: any, categories: any[]) {
+    if (!categories || categories.length === 0) return;
+
+    for (const cat of categories) {
+      writer.stream.write({
+        code: cat.code,
+        type: cat.type || null,
+        simple_code: cat.simple_code || null,
+        description: cat.description || null,
+      });
+      writer.count++;
+    }
+  }
+
+  /**
+   * Write chains to CSV (from GTTO_F files)
+   */
+  writeChains(writer: any, chains: any[]) {
+    if (!chains || chains.length === 0) return;
+
+    for (const chain of chains) {
+      writer.stream.write({
+        code: chain.code,
+        name: chain.name || null,
+      });
+      writer.count++;
+    }
   }
 }
 

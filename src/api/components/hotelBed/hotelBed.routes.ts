@@ -43,6 +43,16 @@ export class HotelBedRoutes {
     );
 
     /**
+     * Upload existing CSVs to S3 and load to Aurora
+     * POST /hotelbed/upload-and-load
+     * No cache - processing endpoint
+     */
+    this.router.post(
+      '/upload-and-load',
+      this.controller.uploadAndLoad
+    );
+
+    /**
      * Get hotels with optional pagination and filters
      * GET /hotelbed/hotels
      * Cache: 10 minutes (600s) - frequently accessed

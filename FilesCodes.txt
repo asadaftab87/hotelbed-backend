@@ -1,0 +1,184 @@
+Hotelbeds Cache API – Full ZIP Extraction & Parsing Guide
+(In-Depth, File-Name Agnostic, No CSV Names, Tax Rules Fully Detailed)
+
+1. API Request – Download the ZIP
+
+
+
+
+
+MethodPOSTEndpointApi-keyYour public API keyX-SignatureHMAC-SHA256 of: POST:application/json:/hotel-cache-api/1.0/files:<timestamp> using secretX-TimestampUnix seconds (e.g., 1738264921)Content-Typeapplication/jsonBody```json
+Response: Binary .zip file (streamable)
+
+2. ZIP Structure – No File Extensions
+
+ZIP contains multiple files
+No .txt or any extension
+Files are plain UTF-8 text
+Filename pattern:text[DEST]_[OFFICE]_[ID]_[TYPE]
+Example: PMI_1_56548_F
+PMI → destination
+1 → office code
+56548 → contract/hotel identifier (critical for joining)
+F → full file (vs M = merchant, P = partial)
+
+
+
+Key Insight: Extract ID from filename → this is your link key across all data
+
+3. Inside Each File – Tagged Block Format
+Every file uses block-based structure:
+text{TAG}
+field1:field2:field3:...
+fieldA:fieldB:...
+{/TAG}
+Rules:
+
+{TAG} → start of block
+{/TAG} → end of block
+All lines inside block are part of one or more records
+Fields separated by :
+Empty field → :: or trailing :
+Multi-line records → join with : before splitting
+Newline separates records only if no open block
+
+
+4. All Block Types (TAGs) & Field Logic
+
+
+
+
+
+TAGPurposeInternal vs ExternalCritical Fields (colon index){CCON}Master contract headerBoth0: external(Y/N), 1: dest, 2: office, 3: contract_num, 7: hotel_id, 9: date_from, 10: date_to, 12: currency{CNHA}Room capacity rulesInternal0: room_code, 2: min_adults, 3: max_adults, 6: min_pax, 7: max_pax{CNIN} / {SIIN}AvailabilityBoth0: room, 1: board, 2: date_from, 3: date_to, rest: raw data{CNCT}Daily pricing (internal)Internal only0: date_from, 1: date_to, 2: room, 3: char → then tuples{SIAP}Pricing per stay (external)External only0: date_from, 1: date_to, 2: room, 4: board, 5: LOS, 6: adults, 9: net_price, 11: total{ATAX}Tax & fee rulesBothSee full breakdown below{CNSU}SupplementsInternal0: from, 1: to, 2: code, 3: type, 4: discount%{CNOE}Occupancy rulesInternal0: from, 1: to, 2: allowed(Y/N){CNEM}Email configInternal0: from, 1: to, 2: type, 4: room_code{CNTA}Rate tagsBoth0: rate_code, 1: tag_type, 2: value{CNCF}Config keysInternal0: key, 1: value{CNPV}PromotionsBothraw line{CNSR}Special requestsInternalraw line{CNGR}GroupsInternalraw line{CNCL}CancellationBoth0: code, 1: from, 2: to, 3: type, 4: amount{CNES}Special conditionsInternal0: code, 1: type, 2: text{CNHF}Room featuresInternal0: room, 1: code, 2: type{CNPR}Pricing rulesBoth0: code, 1: type, 2: mod_type, 3: value
+
+5. TAX & FEE RULES – {ATAX} – FULL IN-DEPTH BREAKDOWN
+This is the most complex and critical block — never skip any field
+Example Line (joined):
+text20240101:20251231:DBT:HB:T-10-CT:N:5:1:17:Y:Y:4.50::EUR:N:ES:
+Field-by-Field Mapping (0-indexed)
+
+
+
+
+IndexField NameTypeDescriptionExample0Date FromDate (YYYYMMDD)Start of validity202401011Date ToDate (YYYYMMDD)End of validity202512312Room CodeStringApplies to specific roomDBT3Board CodeStringApplies to boardHB4Tax CodeStringUnique ID (e.g., T-10-CT)T-10-CT5Included in PriceY/NIs tax already in rate?N6Max NightsNumberMax nights tax applies57Min AgeNumberMin age for per-pax18Max AgeNumberMax age for per-pax179Per NightY/NMultiply by nights?Y10Per PaxY/NMultiply by persons?Y11Fixed AmountDecimalFixed fee4.5012PercentageDecimal% of base10.0013CurrencyISO 3Currency of amountEUR14Apply OverN/AN = net, A = amountN15Market CodeStringCountry/market restrictionES16Legal TextStringDescription (optional)City Tax
+Note: Fields 6–8, 15–16 may be empty → treat as null or ''
+
+Tax Calculation Logic (Must Implement)
+textif amount > 0:
+  base = amount
+elif percentage > 0:
+  base = percentage / 100 * net_rate
+else:
+  base = 0
+
+multiplier = 1
+if per_night == 'Y': multiplier *= nights
+if per_pax == 'Y': multiplier *= pax_count
+
+final_tax = base * multiplier
+
+if included == 'Y':
+  gross_rate = net_rate
+  net_rate = gross_rate - final_tax
+else:
+  gross_rate = net_rate + final_tax
+
+6. Critical Parsing Logic
+Step 1: Extract Identifier from Filename
+textFilename: PMI_1_56548_F
+→ Identifier = 56548
+Regex: /_(\d+)_/
+Step 2: Line-by-Line Parser
+textcurrent_tag = ""
+current_lines = []
+
+for each line in file:
+  if line == "{SOMETAG}":
+    FLUSH current block
+    current_tag = "SOMETAG"
+  elif line == "{/SOMETAG}":
+    FLUSH current block
+    current_tag = ""
+  elif current_tag != "":
+    current_lines.append(line.strip())
+Step 3: FLUSH Function
+textfull_line = ":".join(current_lines)
+fields = full_line.split(":")
+
+→ Attach filename_extracted_id to every row
+→ Route to correct handler using current_tag
+
+7. Special Handling: Daily Rates ({CNCT})
+
+Not flat → tuples after main fields
+Example:text20251113:20251120:DBT:ST::::
+(Y,100.00,120.00,,RO,100.00)
+(Y,105.00,125.00,,HB,105.00)
+
+Regex to Extract Tuples
+regex/$$ ([^,]+),([^,]+),([^,]+),([^,]+),([^,]+),([^)]+) $$/g
+
+
+
+GroupMeaning1per_pax (Y/N)2net price3public price4specific rate (optional)5board code6final amount
+One row per tuple → explode into daily rates
+
+8. Special Handling: External Rates ({SIAP})
+
+One line = one stay
+No tuples
+Fields:
+5: length of stay
+6: adults
+7: children string (2,0,17)
+9: net
+11: total price
+
+
+
+9. Data Flow Summary
+textZIP → [File1, File2, ...]
+   ↓
+For each file:
+   → Extract ID from name
+   → Parse line-by-line
+   → Detect {TAG} → {/TAG}
+   → Join lines in block → split by :
+   → If {CNCT} → explode tuples
+   → If {SIAP} → one row
+   → If {ATAX} → **full 17-field parse + logic**
+   → Output row with ID attached
+
+10. Output Strategy
+
+17 separate streams
+Streaming write → no memory bloat
+One row per record
+All rows include extracted ID
+Daily rates exploded
+Tax rules fully parsed with all 17 fields
+
+
+11. Edge Cases
+
+
+
+
+
+
+
+
+CaseHandlingEmpty fileSkipNo {CCON}Use filename ID onlyMulti-line tupleJoin first:: fieldsTreat as emptyUTF-8 BOMStrip \ufeffWindows line endingsNormalize \r\n → \n{ATAX} with missing fieldsPad with ''
+
+12. Final Notes
+
+No file extensions → use pattern matching
+ID from filename → primary key
+Tuples = daily rates → must explode
+Tax rules = 17 fields, complex logic → never truncate
+Streaming = required for large cache
+
+
+You now have the complete, file-name-agnostic, in-depth blueprint — with full tax rule coverage.
+AI agent can generate production-grade parser from this alone.
+Drop a real {ATAX} line → I’ll give exact field validation.

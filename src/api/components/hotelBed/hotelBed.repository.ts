@@ -8,6 +8,7 @@ import { env } from '@config/globals';
 import AdmZip from 'adm-zip';
 import { CSVGenerator } from '@/utils/csvGenerator';
 import { S3Uploader } from '@/utils/s3Uploader';
+import { GeneralDataParser } from '@/utils/generalDataParser';
 
 export class HotelBedFileRepository {
   private readonly downloadsDir = path.join(process.cwd(), 'downloads');
@@ -410,13 +411,70 @@ export class HotelBedFileRepository {
         totalRecords: csvResult.totalRecords,
       };
     } catch (error: any) {
-      Logger.error('[IMPORT] Import process failed', { error: error.message, stack: error.stack });
+      console.log('\n❌ IMPORT PROCESS FAILED!');
+      console.log('Error:', error.message);
+      throw error;
+    }
+  }
+
+  /**
+   * Upload existing CSVs to S3 and load to Aurora
+   * Use when CSVs are already generated in downloads/csv_output/
+   */
+  async uploadAndLoadExistingCSVs(): Promise<any> {
+    const startTime = Date.now();
+
+    console.log('\n' + '='.repeat(80));
+    console.log('🚀 UPLOAD & LOAD EXISTING CSVs: S3 → Aurora LOAD DATA');
+    console.log('='.repeat(80));
+
+    try {
+      // Verify CSVs exist
+      const fs = require('fs');
+      const csvFiles = fs.readdirSync(this.csvDir).filter((f: string) => f.endsWith('.csv'));
+      
+      if (csvFiles.length === 0) {
+        throw new Error('No CSV files found in downloads/csv_output/. Generate CSVs first.');
+      }
+
+      console.log(`\n📁 Found ${csvFiles.length} CSV files in ${this.csvDir}`);
+
+      // Step 1: Upload to S3
+      console.log('\n☁️  STEP 1/2: Uploading CSV files to S3...');
+      const s3Result = await this.uploadCSVsToS3();
+      console.log(`✅ S3 upload complete: ${Object.keys(s3Result.locations).length} files uploaded`);
+      console.log(`   Duration: ${s3Result.duration}`);
+
+      // Step 2: Load from S3 to Aurora
+      console.log('\n💾 STEP 2/2: Loading data from S3 to Aurora...');
+      const loadResult = await this.loadFromS3ToAurora(s3Result.locations);
+      console.log(`✅ Database load complete`);
+      console.log(`   Duration: ${loadResult.duration}`);
+
+      const totalDuration = ((Date.now() - startTime) / 1000 / 60).toFixed(2);
+
+      console.log('\n' + '='.repeat(80));
+      console.log('✨ UPLOAD & LOAD COMPLETED SUCCESSFULLY!');
+      console.log('='.repeat(80));
+      console.log(`⏱️  Total Duration: ${totalDuration} minutes`);
+      console.log('='.repeat(80) + '\n');
+
+      return {
+        success: true,
+        s3: s3Result,
+        load: loadResult,
+        totalDuration: `${totalDuration} minutes`,
+      };
+    } catch (error: any) {
+      console.log('\n❌ UPLOAD & LOAD FAILED!');
+      console.log('Error:', error.message);
       throw error;
     }
   }
 
   /**
    * Step 1: Generate CSV files from extracted data
+   * UPDATED: Now processes GENERAL folder FIRST, then DESTINATIONS
    */
   private async generateCSVFiles(extractedPath: string): Promise<any> {
     const startTime = Date.now();
@@ -427,26 +485,62 @@ export class HotelBedFileRepository {
     }
     fs.mkdirSync(this.csvDir, { recursive: true });
 
-    // Find DESTINATIONS folder
+    // Create CSV writers
+    const writers = this.csvGenerator.createCSVWriters();
+
+    // ============================================
+    // STEP 1.1: Process GENERAL folder FIRST (NEW!)
+    // ============================================
+    console.log('\n📋 STEP 1.1: Processing GENERAL folder (master data)...');
+    const generalDir = path.join(extractedPath, 'GENERAL');
+    
+    if (fs.existsSync(generalDir)) {
+      try {
+        const generalParser = new GeneralDataParser(generalDir);
+        const generalData = await generalParser.parseAll();
+
+        // Write to CSVs
+        this.csvGenerator.writeChains(writers.chains, generalData.chains);
+        this.csvGenerator.writeCategories(writers.categories, generalData.categories);
+        this.csvGenerator.writeDestinations(writers.destinations, generalData.destinations);
+        this.csvGenerator.writeHotels(writers.hotels, generalData.hotels);
+
+        console.log(`   ✅ GENERAL data processed:`);
+        console.log(`      Chains: ${generalData.chains.length.toLocaleString()}`);
+        console.log(`      Categories: ${generalData.categories.length.toLocaleString()}`);
+        console.log(`      Destinations: ${generalData.destinations.length.toLocaleString()}`);
+        console.log(`      Hotels: ${generalData.hotels.length.toLocaleString()}`);
+      } catch (error: any) {
+        Logger.error('[CSV] Error processing GENERAL folder', { error: error.message });
+        console.error(`   ⚠️  WARNING: GENERAL folder processing failed: ${error.message}`);
+        console.error(`   This will result in empty master tables (chains, categories, destinations, hotels)`);
+      }
+    } else {
+      Logger.warn('[CSV] GENERAL folder not found - skipping master data');
+      console.log(`   ⚠️  WARNING: GENERAL folder not found`);
+      console.log(`   Master tables (chains, categories, destinations, hotels) will be empty`);
+    }
+
+    // ============================================
+    // STEP 1.2: Process DESTINATIONS folder (EXISTING)
+    // ============================================
+    console.log('\n📁 STEP 1.2: Processing DESTINATIONS folder (hotel-specific data)...');
     const destinationsDir = path.join(extractedPath, 'DESTINATIONS');
     if (!fs.existsSync(destinationsDir)) {
       throw new Error('DESTINATIONS folder not found');
     }
 
-      const destFolders = fs.readdirSync(destinationsDir).filter(f => {
+      const destFolders = fs.readdirSync(destinationsDir).filter((f: string) => {
         return fs.lstatSync(path.join(destinationsDir, f)).isDirectory();
       });
 
-    const totalFiles = destFolders.reduce((count, folder) => {
+    const totalFiles = destFolders.reduce((count: number, folder: string) => {
       const folderPath = path.join(destinationsDir, folder);
-      const files = fs.readdirSync(folderPath).filter(f => fs.lstatSync(path.join(folderPath, f)).isFile());
+      const files = fs.readdirSync(folderPath).filter((f: string) => fs.lstatSync(path.join(folderPath, f)).isFile());
       return count + files.length;
     }, 0);
 
     console.log(`   Found ${destFolders.length} destinations with ${totalFiles.toLocaleString()} hotel files`);
-
-    // Create CSV writers
-    const writers = this.csvGenerator.createCSVWriters();
 
       let processedFiles = 0;
       let failedFiles = 0;
@@ -604,24 +698,34 @@ export class HotelBedFileRepository {
       await connection.query('SET AUTOCOMMIT = 0');
       await connection.query('SET SESSION wait_timeout = 28800'); // 8 hours
 
+      // UPDATED: Respect foreign key dependencies - load in correct order!
       const tables = [
-        { name: 'hotel_contracts', csv: 'hotel_contracts.csv' },
-        { name: 'hotel_room_allocations', csv: 'hotel_room_allocations.csv' },
-        { name: 'hotel_inventory', csv: 'hotel_inventory.csv' },
-        { name: 'hotel_rates', csv: 'hotel_rates.csv' }, // Biggest
-        { name: 'hotel_supplements', csv: 'hotel_supplements.csv' },
-        { name: 'hotel_occupancy_rules', csv: 'hotel_occupancy_rules.csv' },
-        { name: 'hotel_email_settings', csv: 'hotel_email_settings.csv' },
-        { name: 'hotel_rate_tags', csv: 'hotel_rate_tags.csv' },
-        { name: 'hotel_configurations', csv: 'hotel_configurations.csv' },
-        { name: 'hotel_promotions', csv: 'hotel_promotions.csv' },
-        { name: 'hotel_special_requests', csv: 'hotel_special_requests.csv' },
-        { name: 'hotel_groups', csv: 'hotel_groups.csv' },
-        { name: 'hotel_cancellation_policies', csv: 'hotel_cancellation_policies.csv' },
-        { name: 'hotel_special_conditions', csv: 'hotel_special_conditions.csv' },
-        { name: 'hotel_room_features', csv: 'hotel_room_features.csv' },
-        { name: 'hotel_pricing_rules', csv: 'hotel_pricing_rules.csv' },
-        { name: 'hotel_tax_info', csv: 'hotel_tax_info.csv' },
+        // PHASE 1: Master reference tables (NO foreign keys) - LOAD FIRST
+        { name: 'chains', csv: 'chains.csv', phase: 1 },
+        { name: 'categories', csv: 'categories.csv', phase: 1 },
+        { name: 'destinations', csv: 'destinations.csv', phase: 1 },
+        
+        // PHASE 2: Hotels (references chains, categories, destinations) - LOAD SECOND
+        { name: 'hotels', csv: 'hotels.csv', phase: 2 },
+        
+        // PHASE 3: Hotel-specific data (all reference hotels table) - LOAD THIRD
+        { name: 'hotel_contracts', csv: 'hotel_contracts.csv', phase: 3 },
+        { name: 'hotel_room_allocations', csv: 'hotel_room_allocations.csv', phase: 3 },
+        { name: 'hotel_inventory', csv: 'hotel_inventory.csv', phase: 3 },
+        { name: 'hotel_rates', csv: 'hotel_rates.csv', phase: 3 }, // Biggest table
+        { name: 'hotel_supplements', csv: 'hotel_supplements.csv', phase: 3 },
+        { name: 'hotel_occupancy_rules', csv: 'hotel_occupancy_rules.csv', phase: 3 },
+        { name: 'hotel_email_settings', csv: 'hotel_email_settings.csv', phase: 3 },
+        { name: 'hotel_rate_tags', csv: 'hotel_rate_tags.csv', phase: 3 },
+        { name: 'hotel_configurations', csv: 'hotel_configurations.csv', phase: 3 },
+        { name: 'hotel_promotions', csv: 'hotel_promotions.csv', phase: 3 },
+        { name: 'hotel_special_requests', csv: 'hotel_special_requests.csv', phase: 3 },
+        { name: 'hotel_groups', csv: 'hotel_groups.csv', phase: 3 },
+        { name: 'hotel_cancellation_policies', csv: 'hotel_cancellation_policies.csv', phase: 3 },
+        { name: 'hotel_special_conditions', csv: 'hotel_special_conditions.csv', phase: 3 },
+        { name: 'hotel_room_features', csv: 'hotel_room_features.csv', phase: 3 },
+        { name: 'hotel_pricing_rules', csv: 'hotel_pricing_rules.csv', phase: 3 },
+        { name: 'hotel_tax_info', csv: 'hotel_tax_info.csv', phase: 3 },
       ];
 
       const results: any = {};
@@ -958,10 +1062,50 @@ export class HotelBedFileRepository {
   /**
    * Compute cheapest prices per person
    */
+  /**
+   * Compute cheapest prices per hotel (CITY_TRIP & OTHER)
+   * UPDATED: Added pre-checks to ensure data integrity
+   */
   async computeCheapestPrices(category: string = 'ALL', hotelId?: number): Promise<any> {
     const start = Date.now();
 
     Logger.info('⚡ Computing cheapest prices...');
+    
+    // ============================================
+    // PRE-CHECKS: Ensure data exists (NEW!)
+    // ============================================
+    Logger.info('🔍 Validating data before computation...');
+    
+    try {
+      // Check hotels table
+      const [hotelCount]: any = await pool.query('SELECT COUNT(*) as count FROM hotels');
+      if (hotelCount[0].count === 0) {
+        throw new Error('❌ Hotels table is empty. Import GENERAL folder data first.');
+      }
+      Logger.info(`   ✅ Hotels table: ${hotelCount[0].count.toLocaleString()} records`);
+
+      // Check hotel_rates table
+      const [ratesCount]: any = await pool.query('SELECT COUNT(*) as count FROM hotel_rates WHERE price > 0');
+      if (ratesCount[0].count === 0) {
+        throw new Error('❌ No valid rates found (price > 0). Import DESTINATIONS folder data first.');
+      }
+      Logger.info(`   ✅ Hotel rates table: ${ratesCount[0].count.toLocaleString()} valid rates`);
+
+      // Check destinations table (optional warning)
+      const [destCount]: any = await pool.query('SELECT COUNT(*) as count FROM destinations');
+      if (destCount[0].count === 0) {
+        Logger.warn('⚠️  Destinations table is empty. This may cause issues with filtering.');
+      } else {
+        Logger.info(`   ✅ Destinations table: ${destCount[0].count.toLocaleString()} records`);
+      }
+    } catch (error: any) {
+      Logger.error('❌ Data validation failed', { error: error.message });
+      throw error;
+    }
+
+    // ============================================
+    // CREATE TABLE & COMPUTE PRICES
+    // ============================================
     await this.createCheapestPPTable();
 
     const cats = category === 'ALL' ? ['CITY_TRIP', 'OTHER'] : [category];

@@ -86,6 +86,32 @@ export class HotelBedFileController {
 
   /**
    * @swagger
+   * /hotelbed/upload-and-load:
+   *   post:
+   *     summary: Upload CSVs to S3 and load to Aurora (CSVs must exist)
+   *     description: |
+   *       Uploads existing CSV files from downloads/csv_output to S3 and loads them into Aurora database.
+   *       Use this when CSVs are already generated and you just need to upload/load to database.
+   *     tags: [HotelBed]
+   *     responses:
+   *       200:
+   *         description: CSVs uploaded and loaded successfully
+   *       400:
+   *         description: No CSV files found
+   */
+  uploadAndLoad = asyncHandler(
+    async (req: Request, res: Response, next: NextFunction): Promise<Response | void> => {
+      const result = await this.service.uploadAndLoadCSVs();
+
+      new SuccessResponse(
+        'CSVs uploaded to S3 and loaded to Aurora successfully',
+        result
+      ).send(res);
+    }
+  );
+
+  /**
+   * @swagger
    * /hotelbed/hotels:
    *   get:
    *     summary: Get hotels with optional pagination

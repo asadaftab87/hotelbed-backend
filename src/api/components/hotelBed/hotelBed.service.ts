@@ -53,6 +53,41 @@ export class HotelBedFileService {
   }
 
   /**
+   * Upload existing CSVs to S3 and load to Aurora
+   * Use this when CSVs are already generated
+   * @returns Upload and load result
+   */
+  async uploadAndLoadCSVs(): Promise<any> {
+    const serviceStartTime = Date.now();
+
+    try {
+      Logger.info('[SERVICE] 🚀 Starting CSV upload and database load');
+
+      // Call repository method to upload and load
+      const result = await this.repository.uploadAndLoadExistingCSVs();
+
+      const totalDuration = ((Date.now() - serviceStartTime) / 1000 / 60).toFixed(2);
+
+      Logger.info('[SERVICE] CSV upload and load finished successfully', {
+        totalDuration: `${totalDuration} minutes`
+      });
+
+      return {
+        success: true,
+        ...result,
+        totalDuration: `${totalDuration} minutes`,
+        timestamp: new Date()
+      };
+    } catch (error: any) {
+      Logger.error('[SERVICE] CSV upload and load failed', {
+        error: error.message,
+        stack: error.stack
+      });
+      throw error;
+    }
+  }
+
+  /**
    * Download and extract HotelBeds cache file
    * @returns Combined result with download and extraction details
    */
