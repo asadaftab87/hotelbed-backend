@@ -444,15 +444,15 @@ export class HotelBedFileService {
    * Get cheapest_pp table status
    */
   async getCheapestStatus(): Promise<any> {
-    try {
-      Logger.info('[SERVICE] Checking cheapest_pp status');
-      const result = await this.repository.getCheapestStatus();
-      Logger.info('[SERVICE] Cheapest PP status retrieved', { count: result.count });
-      return result;
-    } catch (error: any) {
-      Logger.error('[SERVICE] Error checking cheapest_pp', { error: error.message });
-      throw error;
-    }
+    // try {
+    //   Logger.info('[SERVICE] Checking cheapest_pp status');
+    //   const result = await this.repository.getCheapestStatus();
+    //   Logger.info('[SERVICE] Cheapest PP status retrieved', { count: result.count });
+    //   return result;
+    // } catch (error: any) {
+    //   Logger.error('[SERVICE] Error checking cheapest_pp', { error: error.message });
+    //   throw error;
+    // }
   }
 
   /**
