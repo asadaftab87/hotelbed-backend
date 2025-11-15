@@ -7,8 +7,8 @@ import { Server } from './api/server';
 import Logger from '@/core/Logger';
 import { testConnection } from '@config/database';
 import { redisManager } from '@config/redis.config';
+import { scheduler } from '@/jobs';
 // import { queueManager } from './jobs/queue.manager';
-// import { cronScheduler } from './jobs/cron.scheduler';
 
 (async function main(): Promise<void> {
   try {
@@ -45,18 +45,18 @@ import { redisManager } from '@config/redis.config';
     // }
 
     // Initialize cron scheduler - Optional
-    // const cronEnabled = process.env.ENABLE_CRON !== 'false';
-    // if (cronEnabled) {
-    //   try {
-    //     cronScheduler.initialize();
-    //     Logger.info('✅ Cron scheduler initialized');
-    //   } catch (error) {
-    //     Logger.warn('⚠️ Cron scheduler initialization failed, continuing without scheduler');
-    //     Logger.debug('Cron error:', error);
-    //   }
-    // } else {
-    //   Logger.info('⏭️ Cron scheduler disabled via environment variable');
-    // }
+    const cronEnabled = process.env.ENABLE_CRON === 'true';
+    if (cronEnabled) {
+      try {
+        scheduler.start();
+        Logger.info('✅ Cron scheduler initialized');
+      } catch (error) {
+        Logger.warn('⚠️ Cron scheduler initialization failed, continuing without scheduler');
+        Logger.debug('Cron error:', error);
+      }
+    } else {
+      Logger.info('⏭️ Cron scheduler disabled via environment variable');
+    }
 
     process.on('uncaughtException', (e) => {
       Logger.error('Uncaught exception:', e);
@@ -88,22 +88,22 @@ import { redisManager } from '@config/redis.config';
     });
 
     // Graceful shutdown
-    // const shutdown = async () => {
-    //   Logger.info('🛑 Shutting down gracefully...');
+    const shutdown = async () => {
+      Logger.info('🛑 Shutting down gracefully...');
 
-    //   // try {
-    //   //   // Stop cron jobs
-    //   //   cronScheduler.stopAll();
-    //   // } catch (err) {
-    //   //   Logger.debug('Error stopping cron:', err);
-    //   // }
+      try {
+        // Stop cron jobs
+        scheduler.stop();
+      } catch (err) {
+        Logger.debug('Error stopping cron:', err);
+      }
 
-    //   // try {
-    //   //   // Close queue connections
-    //   //   await queueManager.close();
-    //   // } catch (err) {
-    //   //   Logger.debug('Error closing queue:', err);
-    //   // }
+      // try {
+      //   // Close queue connections
+      //   await queueManager.close();
+      // } catch (err) {
+      //   Logger.debug('Error closing queue:', err);
+      // }
 
     //   try {
     //     // Close Redis
@@ -121,14 +121,14 @@ import { redisManager } from '@config/redis.config';
     //     Logger.debug('Error closing database pool:', err);
     //   }
 
-    //   server.close(() => {
-    //     Logger.info('✅ Server closed');
-    //     process.exit(0);
-    //   });
-    // };
+      server.close(() => {
+        Logger.info('✅ Server closed');
+        process.exit(0);
+      });
+    };
 
-    // process.on('SIGTERM', shutdown);
-    // process.on('SIGINT', shutdown);
+    process.on('SIGTERM', shutdown);
+    process.on('SIGINT', shutdown);
 
   } catch (err: any) {
     console.log(err);

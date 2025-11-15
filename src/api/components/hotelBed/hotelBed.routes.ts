@@ -53,6 +53,16 @@ export class HotelBedRoutes {
     );
 
     /**
+     * Load data from S3 to Aurora (files must already be in S3)
+     * POST /hotelbed/load-from-s3
+     * No cache - processing endpoint
+     */
+    this.router.post(
+      '/load-from-s3',
+      this.controller.loadFromS3
+    );
+
+    /**
      * Get hotels with optional pagination and filters
      * GET /hotelbed/hotels
      * Cache: 10 minutes (600s) - frequently accessed

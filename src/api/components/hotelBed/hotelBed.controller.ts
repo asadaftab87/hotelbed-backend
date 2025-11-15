@@ -112,6 +112,33 @@ export class HotelBedFileController {
 
   /**
    * @swagger
+   * /hotelbed/load-from-s3:
+   *   post:
+   *     summary: Load data from S3 to Aurora (files must already be in S3)
+   *     description: |
+   *       Loads data directly from S3 to Aurora database using LOAD DATA FROM S3.
+   *       Use this when CSV files are already uploaded to S3 and you just need to reload the database.
+   *       Useful for testing or reloading data without re-uploading files.
+   *     tags: [HotelBed]
+   *     responses:
+   *       200:
+   *         description: Data loaded from S3 successfully
+   *       500:
+   *         description: S3 integration not enabled or files not found
+   */
+  loadFromS3 = asyncHandler(
+    async (req: Request, res: Response, next: NextFunction): Promise<Response | void> => {
+      const result = await this.service.loadFromS3Only();
+
+      new SuccessResponse(
+        'Data loaded from S3 to Aurora successfully',
+        result
+      ).send(res);
+    }
+  );
+
+  /**
+   * @swagger
    * /hotelbed/hotels:
    *   get:
    *     summary: Get hotels with optional pagination

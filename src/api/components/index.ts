@@ -5,6 +5,7 @@ import { HotelBedRoutes } from './hotelBed/hotelBed.routes';
 import { addTraceId } from '@middlewares/cacheAside';
 import { setupSwagger } from '@middlewares/swagger';
 import monitoringController from '@/controllers/monitoringController';
+import cronController from '@/controllers/cronController';
 import Logger from '@/core/Logger';
 
 export const registerApiRoutes = (
@@ -59,6 +60,12 @@ export const registerApiRoutes = (
   router.get(`${prefix}/monitoring/metrics`, monitoringController.systemMetrics.bind(monitoringController));
   router.get(`${prefix}/monitoring/stats`, monitoringController.appStats.bind(monitoringController));
   router.post(`${prefix}/monitoring/cache/clear`, monitoringController.clearCache.bind(monitoringController));
+
+  // Cron job management routes
+  router.get(`${prefix}/cron/status`, cronController.getStatus.bind(cronController));
+  router.post(`${prefix}/cron/trigger/daily-sync`, cronController.triggerDailySync.bind(cronController));
+  router.post(`${prefix}/cron/trigger/weekly-sync`, cronController.triggerWeeklySync.bind(cronController));
+  router.post(`${prefix}/cron/trigger/price-computation`, cronController.triggerPriceComputation.bind(cronController));
 
   // User-specific routes
   if (userPrefix) {

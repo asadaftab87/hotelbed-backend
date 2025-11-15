@@ -88,6 +88,41 @@ export class HotelBedFileService {
   }
 
   /**
+   * Load data from S3 to Aurora WITHOUT uploading
+   * Use this when CSV files are already in S3
+   * @returns Load result
+   */
+  async loadFromS3Only(): Promise<any> {
+    const serviceStartTime = Date.now();
+
+    try {
+      Logger.info('[SERVICE] 🚀 Starting database load from S3 (no upload)');
+
+      // Call repository method to load from S3
+      const result = await this.repository.loadFromS3Only();
+
+      const totalDuration = ((Date.now() - serviceStartTime) / 1000 / 60).toFixed(2);
+
+      Logger.info('[SERVICE] S3 load finished successfully', {
+        totalDuration: `${totalDuration} minutes`
+      });
+
+      return {
+        success: true,
+        ...result,
+        totalDuration: `${totalDuration} minutes`,
+        timestamp: new Date()
+      };
+    } catch (error: any) {
+      Logger.error('[SERVICE] S3 load failed', {
+        error: error.message,
+        stack: error.stack
+      });
+      throw error;
+    }
+  }
+
+  /**
    * Download and extract HotelBeds cache file
    * @returns Combined result with download and extraction details
    */

@@ -473,6 +473,79 @@ export class HotelBedFileRepository {
   }
 
   /**
+   * Load data from S3 to Aurora WITHOUT uploading
+   * Use this when CSV files are already uploaded to S3
+   * @returns Load result with table details
+   */
+  async loadFromS3Only(): Promise<any> {
+    const startTime = Date.now();
+
+    console.log('\n' + '='.repeat(80));
+    console.log('🚀 LOAD FROM S3: Aurora LOAD DATA (No Upload)');
+    console.log('='.repeat(80));
+
+    try {
+      // Build S3 locations map for all expected CSV files
+      const expectedCSVs = [
+        'chains.csv',
+        'categories.csv',
+        'destinations.csv',
+        'hotels.csv',
+        'hotel_contracts.csv',
+        'hotel_room_allocations.csv',
+        'hotel_inventory.csv',
+        'hotel_rates.csv',
+        'hotel_supplements.csv',
+        'hotel_occupancy_rules.csv',
+        'hotel_email_settings.csv',
+        'hotel_rate_tags.csv',
+        'hotel_configurations.csv',
+        'hotel_promotions.csv',
+        'hotel_special_requests.csv',
+        'hotel_groups.csv',
+        'hotel_cancellation_policies.csv',
+        'hotel_special_conditions.csv',
+        'hotel_room_features.csv',
+        'hotel_pricing_rules.csv',
+        'hotel_tax_info.csv',
+      ];
+
+      const s3Locations: Record<string, string> = {};
+      for (const csv of expectedCSVs) {
+        s3Locations[csv] = this.s3Uploader.getS3Url(csv);
+      }
+
+      console.log(`\n📍 Loading ${expectedCSVs.length} tables from S3...`);
+      console.log(`   S3 Bucket: ${process.env.AWS_S3_BUCKET_NAME}`);
+      console.log(`   Prefix: hotelbed-csv/`);
+
+      // Load from S3 to Aurora
+      console.log('\n💾 Loading data from S3 to Aurora...');
+      const loadResult = await this.loadFromS3ToAurora(s3Locations);
+      console.log(`✅ Database load complete`);
+      console.log(`   Duration: ${loadResult.duration}`);
+
+      const totalDuration = ((Date.now() - startTime) / 1000 / 60).toFixed(2);
+
+      console.log('\n' + '='.repeat(80));
+      console.log('✨ LOAD FROM S3 COMPLETED!');
+      console.log('='.repeat(80));
+      console.log(`⏱️  Total Duration: ${totalDuration} minutes`);
+      console.log('='.repeat(80) + '\n');
+
+      return {
+        success: true,
+        load: loadResult,
+        totalDuration: `${totalDuration} minutes`,
+      };
+    } catch (error: any) {
+      console.log('\n❌ LOAD FROM S3 FAILED!');
+      console.log('Error:', error.message);
+      throw error;
+    }
+  }
+
+  /**
    * Step 1: Generate CSV files from extracted data
    * UPDATED: Now processes GENERAL folder FIRST, then DESTINATIONS
    */
@@ -667,6 +740,8 @@ export class HotelBedFileRepository {
    */
   private async loadFromS3ToAurora(s3Locations: Record<string, string>): Promise<any> {
     const startTime = Date.now();
+
+    // Get initial connection just for S3 check
     const connection = await pool.getConnection();
 
     try {
@@ -689,14 +764,6 @@ export class HotelBedFileRepository {
           console.log('   Run: npm run enable-s3');
         }
       }
-      
-      console.log('   🔧 Optimizing database settings...');
-      
-      // Optimize for bulk load
-      await connection.query('SET FOREIGN_KEY_CHECKS = 0');
-      await connection.query('SET UNIQUE_CHECKS = 0');
-      await connection.query('SET AUTOCOMMIT = 0');
-      await connection.query('SET SESSION wait_timeout = 28800'); // 8 hours
 
       // UPDATED: Respect foreign key dependencies - load in correct order!
       const tables = [
@@ -736,7 +803,23 @@ export class HotelBedFileRepository {
         const s3Url = this.s3Uploader.getS3Url(table.csv);
         console.log(`   Loading ${table.name}...`);
 
+        // Get a FRESH connection for each table to avoid timeout issues
+        let tableConnection;
         try {
+          tableConnection = await pool.getConnection();
+          
+          // Set aggressive timeouts for large tables
+          const isLargeTable = ['hotel_rates', 'hotel_inventory'].includes(table.name);
+          const timeout = isLargeTable ? 7200 : 3600; // 2 hours for large tables, 1 hour for others
+          
+          await tableConnection.query(`SET SESSION wait_timeout = ${timeout}`);
+          await tableConnection.query(`SET SESSION interactive_timeout = ${timeout}`);
+          await tableConnection.query(`SET SESSION net_read_timeout = ${timeout}`);
+          await tableConnection.query(`SET SESSION net_write_timeout = ${timeout}`);
+          await tableConnection.query('SET FOREIGN_KEY_CHECKS = 0');
+          await tableConnection.query('SET UNIQUE_CHECKS = 0');
+          await tableConnection.query('SET AUTOCOMMIT = 0');
+
           // LOAD DATA FROM S3 - Aurora feature
         const query = `
             LOAD DATA FROM S3 '${s3Url}'
@@ -748,8 +831,12 @@ export class HotelBedFileRepository {
             IGNORE 1 ROWS
           `;
 
-          console.log(`   🔍 Executing LOAD DATA FROM S3: ${s3Url}`);
-          const [result]: any = await connection.query(query);
+          console.log(`   🔍 Executing LOAD DATA FROM S3: ${s3Url} (timeout: ${timeout}s)`);
+          const [result]: any = await tableConnection.query(query);
+          
+          // Commit this table's transaction
+          await tableConnection.query('COMMIT');
+          
           const duration = ((Date.now() - tableStart) / 1000).toFixed(2);
           
           // Get actual rows affected
@@ -772,6 +859,15 @@ export class HotelBedFileRepository {
             console.error(`   Run: npm run enable-s3`);
           }
           
+          // Try to rollback if possible
+          if (tableConnection) {
+            try {
+              await tableConnection.query('ROLLBACK');
+            } catch (rbError) {
+              // Ignore rollback errors
+            }
+          }
+          
           results[table.name] = {
             success: false,
             error: error.message,
@@ -779,31 +875,34 @@ export class HotelBedFileRepository {
           };
           
           // Don't stop on single table error, continue with others
+        } finally {
+          // Always release the connection back to pool
+          if (tableConnection) {
+            tableConnection.release();
+          }
         }
       }
 
-      console.log('   💾 Committing transaction...');
-      await connection.query('COMMIT');
-
-      console.log('   🔧 Restoring database settings...');
-      await connection.query('SET FOREIGN_KEY_CHECKS = 1');
-      await connection.query('SET UNIQUE_CHECKS = 1');
-      await connection.query('SET AUTOCOMMIT = 1');
-
       const duration = ((Date.now() - startTime) / 1000).toFixed(2);
 
+      // Count successes and failures
+      const successCount = Object.values(results).filter((r: any) => r.success).length;
+      const failCount = Object.values(results).filter((r: any) => !r.success).length;
+
+      console.log(`\n   📊 Summary: ${successCount} succeeded, ${failCount} failed`);
+
       return {
-        success: true,
+        success: failCount === 0,
         tables: results,
         duration: `${duration}s`,
+        successCount,
+        failCount,
       };
     } catch (error: any) {
-      await connection.query('ROLLBACK');
-      await connection.query('SET FOREIGN_KEY_CHECKS = 1');
-      await connection.query('SET UNIQUE_CHECKS = 1');
-      await connection.query('SET AUTOCOMMIT = 1');
+      console.error('   ❌ Fatal error during S3 load:', error.message);
       throw error;
     } finally {
+      // Release main connection used for initial setup
       connection.release();
     }
   }
