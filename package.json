@@ -9,6 +9,7 @@
     "start:prod": "cross-env NODE_ENV=production node -r tsconfig-paths/register dist/app.js",
     "build": "npm run clean && tsc && tsc-alias",
     "start": "cross-env NODE_ENV=production node dist/app.js",
+    "serve": "cross-env NODE_ENV=production node -r tsconfig-paths/register dist/app.js",
     "pm2": "pm2 start npm --name hotelbed-backend -- run serve",
     "watch": "tsc -w",
     "clean": "rm -rf dist",
